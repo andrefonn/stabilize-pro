@@ -48,11 +48,13 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.HdrOn
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
+import com.stabilizepro.app.camera.CameraAspectRatio
 import com.stabilizepro.app.data.repository.VideoRepositoryImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -141,6 +143,7 @@ fun CameraScreen(
     var showShaderDrawer by remember { mutableStateOf(false) }
     var showCamera2Drawer by remember { mutableStateOf(false) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
+    var showPresetStrip by remember { mutableStateOf(false) }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -191,6 +194,7 @@ fun CameraScreen(
             CameraPreviewGl(
                 modifier = Modifier.fillMaxSize(),
                 colorGradingParams = colorGradingParams,
+                aspectRatio = cameraSettings.aspectRatio,
                 onSurfaceProviderReady = { surfaceProvider ->
                     cameraManager.initialize(lifecycleOwner, surfaceProvider)
                 }
@@ -370,38 +374,44 @@ fun CameraScreen(
                 .background(Color(0x99000000))
                 .padding(bottom = 24.dp)
         ) {
-            // Presets Quick Carousel Strip
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Presets Quick Carousel Strip (Collapsible via PRESETS toggle)
+            AnimatedVisibility(
+                visible = showPresetStrip,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
             ) {
-                items(presets) { preset ->
-                    val isSelected = selectedPresetId == preset.id
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) ElectricBlue.copy(alpha = 0.35f) else Color(0x55222222))
-                            .border(
-                                1.dp,
-                                if (isSelected) ElectricBlue else SurfaceBorder,
-                                RoundedCornerShape(16.dp)
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(presets) { preset ->
+                        val isSelected = selectedPresetId == preset.id
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isSelected) ElectricBlue.copy(alpha = 0.35f) else Color(0x55222222))
+                                .border(
+                                    1.dp,
+                                    if (isSelected) ElectricBlue else SurfaceBorder,
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedPresetId = preset.id
+                                    colorGradingParams = preset.params
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = preset.name,
+                                color = if (isSelected) ElectricBlueGlow else TextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
-                            .clickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                selectedPresetId = preset.id
-                                colorGradingParams = preset.params
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = preset.name,
-                            color = if (isSelected) ElectricBlueGlow else TextSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                        )
+                        }
                     }
                 }
             }
@@ -410,7 +420,7 @@ fun CameraScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -441,59 +451,18 @@ fun CameraScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Quick toggle chip for Auto-Stabilization in VIDEO mode
-            if (cameraSettings.captureMode == CaptureMode.VIDEO) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (cameraSettings.autoStabilizeAfterRecording) Color(0x3300D4FF) else Color(0x33333333))
-                        .border(1.dp, if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color(0x66666666), RoundedCornerShape(20.dp))
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            val newState = !cameraSettings.autoStabilizeAfterRecording
-                            cameraManager.updateSettings(cameraSettings.copy(autoStabilizeAfterRecording = newState))
-                            Toast.makeText(
-                                context,
-                                if (newState) "Estabilização pós-gravação ativada (vai para fila)" else "Estabilização pós-gravação desativada (salva direto na galeria)",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = if (cameraSettings.autoStabilizeAfterRecording) Icons.Default.AutoAwesome else Icons.Default.Block,
-                        contentDescription = "Estabilização Pós-Gravação",
-                        tint = if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color.LightGray,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Text(
-                        text = if (cameraSettings.autoStabilizeAfterRecording) "Estabilização Pós: ATIVADA" else "Estabilização Pós: DESATIVADA",
-                        color = if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color.LightGray,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-            } else {
-                Spacer(modifier = Modifier.height(10.dp))
-            }
-
-            // Main Trigger Button Bar
+            // Pro Quick Settings Bar: Resolução | FPS | Proporção | Toggle Presets
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Resolution Selector
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(Color(0x66222222))
                         .clickable {
                             val nextQuality = when (cameraSettings.quality) {
@@ -506,7 +475,7 @@ fun CameraScreen(
                             cameraManager.updateSettings(cameraSettings.copy(quality = nextQuality))
                             Toast.makeText(context, nextQuality.displayName, Toast.LENGTH_SHORT).show()
                         }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
                 ) {
                     val label = when (cameraSettings.quality) {
                         VideoQualityOption.AUTO_MAX -> "AUTO"
@@ -522,6 +491,97 @@ fun CameraScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // FPS Selector (30 FPS vs 60 FPS)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0x66222222))
+                        .clickable {
+                            val nextFps = if (cameraSettings.targetFps == 30) 60 else 30
+                            cameraManager.updateSettings(cameraSettings.copy(targetFps = nextFps))
+                            Toast.makeText(context, "$nextFps FPS", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "${cameraSettings.targetFps} FPS",
+                        color = ElectricBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Aspect Ratio Selector (9:16, 3:4, 1:1)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0x66222222))
+                        .clickable {
+                            val nextAspect = when (cameraSettings.aspectRatio) {
+                                CameraAspectRatio.RATIO_16_9 -> CameraAspectRatio.RATIO_4_3
+                                CameraAspectRatio.RATIO_4_3 -> CameraAspectRatio.RATIO_1_1
+                                CameraAspectRatio.RATIO_1_1 -> CameraAspectRatio.RATIO_16_9
+                            }
+                            cameraManager.updateSettings(cameraSettings.copy(aspectRatio = nextAspect))
+                            Toast.makeText(context, "Aspecto: ${nextAspect.displayName}", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = cameraSettings.aspectRatio.displayName,
+                        color = ElectricBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Presets Toggle Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (showPresetStrip) ElectricBlue else Color(0x66222222))
+                        .clickable {
+                            showPresetStrip = !showPresetStrip
+                        }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Palette,
+                            contentDescription = "Presets",
+                            tint = if (showPresetStrip) Color.White else ElectricBlue,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "PRESETS",
+                            color = if (showPresetStrip) Color.White else ElectricBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Main Trigger Button Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
 
                 // Shutter / Record Button
                 if (cameraSettings.captureMode == CaptureMode.PHOTO) {
@@ -587,13 +647,14 @@ fun CameraScreen(
                                     cameraManager.startRecording(
                                         outputFile = videoFile,
                                         onVideoSaved = { uri ->
-                                            if (cameraSettings.autoStabilizeAfterRecording) {
+                                            val shouldProcess = cameraSettings.autoStabilizeAfterRecording || !colorGradingParams.isNeutral()
+                                            if (shouldProcess) {
                                                 StabilizationQueueManager.enqueueTask(
                                                     context = context,
                                                     inputUri = uri,
                                                     videoTitle = videoFile.name,
                                                     config = StabilizationConfig(
-                                                        intensity = StabilizationIntensity.MEDIUM,
+                                                        intensity = if (cameraSettings.autoStabilizeAfterRecording) StabilizationIntensity.MEDIUM else StabilizationIntensity.LOW,
                                                         preset = colorGradingParams
                                                     ),
                                                     presetId = selectedPresetId,
@@ -602,7 +663,7 @@ fun CameraScreen(
 
                                                 Toast.makeText(
                                                     context,
-                                                    "Gravação salva! Estabilização iniciada na fila.",
+                                                    "Gravação salva! Efeitos e estabilização processando em segundo plano.",
                                                     Toast.LENGTH_LONG
                                                 ).show()
                                             } else {

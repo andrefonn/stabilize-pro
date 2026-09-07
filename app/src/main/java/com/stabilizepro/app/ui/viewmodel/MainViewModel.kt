@@ -98,11 +98,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _config.value = newConfig
     }
 
+    private var stabilizationJob: kotlinx.coroutines.Job? = null
+
     fun startStabilization() {
         val video = _selectedVideo.value ?: return
         _currentScreen.value = AppScreen.Processing
 
-        viewModelScope.launch {
+        stabilizationJob = viewModelScope.launch {
             try {
                 val stabilizationResult = stabilizeVideoUseCase(
                     inputUri = video.uri,
@@ -113,11 +115,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 _currentScreen.value = AppScreen.Result(stabilizationResult)
             } catch (e: Exception) {
-                _progress.value = _progress.value.copy(
-                    errorMessage = e.localizedMessage ?: "Erro ao estabilizar vídeo"
-                )
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    _progress.value = _progress.value.copy(
+                        errorMessage = e.localizedMessage ?: "Erro ao estabilizar vídeo"
+                    )
+                }
             }
         }
+    }
+
+    fun cancelStabilization() {
+        stabilizationJob?.cancel()
+        stabilizationJob = null
+        _currentScreen.value = AppScreen.Main(MainTab.STABILIZER)
+        _progress.value = StabilizationProgress()
     }
 
     fun saveToGallery(result: StabilizationResult) {

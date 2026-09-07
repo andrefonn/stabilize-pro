@@ -22,10 +22,18 @@ enum class VideoQualityOption(val displayName: String) {
     HD_720P("HD (720p)")
 }
 
+enum class CameraAspectRatio(val displayName: String, val ratioValue: Float) {
+    RATIO_16_9("9:16", 9f / 16f),
+    RATIO_4_3("3:4", 3f / 4f),
+    RATIO_1_1("1:1", 1.0f)
+}
+
 data class CameraSettings(
     val captureMode: CaptureMode = CaptureMode.VIDEO,
     val selectedLens: LensType = LensType.WIDE,
     val quality: VideoQualityOption = VideoQualityOption.AUTO_MAX,
+    val targetFps: Int = 30, // 30 or 60 FPS
+    val aspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_16_9,
     val iso: Int = 0, // 0 = Auto
     val shutterSpeedNs: Long = 0L, // 0 = Auto
     val evCompensation: Int = 0, // In EV steps

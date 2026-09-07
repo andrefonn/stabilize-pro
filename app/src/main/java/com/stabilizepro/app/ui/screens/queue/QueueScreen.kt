@@ -32,6 +32,9 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sync
+import android.widget.Toast
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -170,11 +173,15 @@ fun QueueScreen(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(tasks, key = { it.id }) { task ->
+                    items(tasks.distinctBy { it.id }, key = { it.id }) { task ->
                         TaskItemCard(
                             task = task,
                             onPlayResult = { uri ->
                                 onOpenResult(uri)
+                            },
+                            onCancel = {
+                                StabilizationQueueManager.cancelTask(context, task.id)
+                                Toast.makeText(context, "Processamento interrompido.", Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -187,16 +194,17 @@ fun QueueScreen(
 @Composable
 private fun TaskItemCard(
     task: StabilizationTask,
-    onPlayResult: (Uri) -> Unit
+    onPlayResult: (Uri) -> Unit,
+    onCancel: () -> Unit = {}
 ) {
     val animatedProgress by animateFloatAsState(
-        targetValue = task.progressPercent / 100f,
+        targetValue = ((task.progressPercent ?: 0).coerceIn(0, 100)) / 100f,
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label = "progress_anim"
     )
 
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
-    val timeFormatted = dateFormat.format(Date(task.createdAt))
+    val timeFormatted = dateFormat.format(Date(task.createdAt ?: System.currentTimeMillis()))
 
     Card(
         modifier = Modifier
@@ -214,20 +222,20 @@ private fun TaskItemCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = task.videoTitle,
+                        text = task.videoTitle ?: "Vídeo",
                         color = TextPrimary,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
                     )
                     Text(
-                        text = "Iniciado às $timeFormatted • ${task.quality.title}",
+                        text = "Iniciado às $timeFormatted • ${task.quality?.title ?: "Original"}",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
                 }
 
-                StatusChip(status = task.status)
+                StatusChip(status = task.status ?: QueueStatus.AGUARDANDO)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -239,12 +247,13 @@ private fun TaskItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = task.stageName,
+                    text = task.stageName ?: "Na fila",
                     color = when (task.status) {
                         QueueStatus.PROCESSANDO -> ElectricBlueGlow
                         QueueStatus.CONCLUIDO -> Color(0xFF00E676)
                         QueueStatus.FALHOU -> Color(0xFFFF5252)
                         QueueStatus.AGUARDANDO -> TextMuted
+                        null -> TextMuted
                     },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -278,6 +287,31 @@ private fun TaskItemCard(
                     color = ElectricBlue,
                     trackColor = SurfaceElevated
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Cancel / Interrupt button
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFFF5252)
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x66FF5252))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Interromper",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Interromper Processamento",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                }
             }
 
             // Error message if failed

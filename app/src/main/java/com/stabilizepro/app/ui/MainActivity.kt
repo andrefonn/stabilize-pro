@@ -177,7 +177,8 @@ class MainActivity : ComponentActivity() {
                                 ProcessingScreen(
                                     progress = progress,
                                     onRetry = { viewModel.retryStabilization() },
-                                    onBackToHome = { viewModel.resetToHome() }
+                                    onBackToHome = { viewModel.resetToHome() },
+                                    onCancel = { viewModel.cancelStabilization() }
                                 )
                             }
                             is AppScreen.Result -> {

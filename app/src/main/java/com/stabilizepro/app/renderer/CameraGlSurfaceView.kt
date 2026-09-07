@@ -50,10 +50,16 @@ class CameraGlSurfaceView(
         renderer.updateColorGrading(params)
     }
 
+    fun updateAspectRatio(ratio: com.stabilizepro.app.camera.CameraAspectRatio) {
+        renderer.updateAspectRatio(ratio)
+    }
+
     fun release() {
-        queueEvent {
-            renderer.release()
-        }
+        try {
+            queueEvent {
+                renderer.release()
+            }
+        } catch (ignored: Exception) {}
     }
 }
 
@@ -61,6 +67,7 @@ class CameraGlSurfaceView(
 fun CameraPreviewGl(
     modifier: Modifier = Modifier,
     colorGradingParams: ColorGradingParams,
+    aspectRatio: com.stabilizepro.app.camera.CameraAspectRatio = com.stabilizepro.app.camera.CameraAspectRatio.RATIO_16_9,
     onSurfaceProviderReady: (Preview.SurfaceProvider) -> Unit
 ) {
     var glView: CameraGlSurfaceView? = remember { null }
@@ -73,10 +80,12 @@ fun CameraPreviewGl(
             }.also {
                 glView = it
                 it.updateColorGrading(colorGradingParams)
+                it.updateAspectRatio(aspectRatio)
             }
         },
         update = { view ->
             view.updateColorGrading(colorGradingParams)
+            view.updateAspectRatio(aspectRatio)
         }
     )
 

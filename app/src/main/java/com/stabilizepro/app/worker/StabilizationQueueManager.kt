@@ -23,21 +23,21 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 data class QueueTaskPersistDto(
-    val id: String,
-    val inputUriString: String,
-    val videoTitle: String,
-    val configJson: String?,
-    val presetId: String?,
-    val qualityName: String,
-    val statusName: String,
-    val progressPercent: Int,
-    val stageName: String,
-    val estimatedSecondsRemaining: Long,
-    val outputUriString: String?,
-    val outputFilePath: String?,
-    val errorMessage: String?,
-    val createdAt: Long,
-    val completedAt: Long?
+    val id: String? = null,
+    val inputUriString: String? = null,
+    val videoTitle: String? = null,
+    val configJson: String? = null,
+    val presetId: String? = null,
+    val qualityName: String? = null,
+    val statusName: String? = null,
+    val progressPercent: Int? = null,
+    val stageName: String? = null,
+    val estimatedSecondsRemaining: Long? = null,
+    val outputUriString: String? = null,
+    val outputFilePath: String? = null,
+    val errorMessage: String? = null,
+    val createdAt: Long? = null,
+    val completedAt: Long? = null
 )
 
 object StabilizationQueueManager {
@@ -77,50 +77,54 @@ object StabilizationQueueManager {
                     val type = object : TypeToken<List<QueueTaskPersistDto>>() {}.type
                     val dtoList: List<QueueTaskPersistDto>? = gson.fromJson(reader, type)
                     if (dtoList != null) {
-                        val models = dtoList.map { dto ->
-                            val parsedConfig = try {
-                                if (!dto.configJson.isNullOrBlank()) {
-                                    gson.fromJson(dto.configJson, StabilizationConfig::class.java)
-                                } else StabilizationConfig()
-                            } catch (e: Exception) {
-                                StabilizationConfig()
-                            }
+                        val models = dtoList.mapNotNull { dto ->
+                            try {
+                                val parsedConfig = try {
+                                    if (!dto.configJson.isNullOrBlank()) {
+                                        gson.fromJson(dto.configJson, StabilizationConfig::class.java)
+                                    } else StabilizationConfig()
+                                } catch (e: Exception) {
+                                    StabilizationConfig()
+                                }
 
-                            val parsedQuality = try {
-                                ExportQuality.valueOf(dto.qualityName)
-                            } catch (e: Exception) {
-                                ExportQuality.ORIGINAL
-                            }
+                                val parsedQuality = try {
+                                    dto.qualityName?.let { ExportQuality.valueOf(it) } ?: ExportQuality.ORIGINAL
+                                } catch (e: Exception) {
+                                    ExportQuality.ORIGINAL
+                                }
 
-                            val parsedStatus = try {
-                                QueueStatus.valueOf(dto.statusName)
-                            } catch (e: Exception) {
-                                QueueStatus.AGUARDANDO
-                            }
+                                val parsedStatus = try {
+                                    dto.statusName?.let { QueueStatus.valueOf(it) } ?: QueueStatus.AGUARDANDO
+                                } catch (e: Exception) {
+                                    QueueStatus.AGUARDANDO
+                                }
 
-                            StabilizationTask(
-                                id = dto.id,
-                                inputUri = if (dto.inputUriString.isNotBlank()) Uri.parse(dto.inputUriString) else Uri.EMPTY,
-                                videoTitle = dto.videoTitle,
-                                config = parsedConfig,
-                                presetId = dto.presetId,
-                                quality = parsedQuality,
-                                status = parsedStatus,
-                                progressPercent = dto.progressPercent,
-                                stageName = dto.stageName,
-                                estimatedSecondsRemaining = dto.estimatedSecondsRemaining,
-                                outputUri = dto.outputUriString?.let { if (it.isNotBlank()) Uri.parse(it) else null },
-                                outputFilePath = dto.outputFilePath,
-                                errorMessage = dto.errorMessage,
-                                createdAt = dto.createdAt,
-                                completedAt = dto.completedAt
-                            )
+                                StabilizationTask(
+                                    id = dto.id ?: UUID.randomUUID().toString(),
+                                    inputUri = dto.inputUriString?.let { if (it.isNotBlank()) Uri.parse(it) else Uri.EMPTY } ?: Uri.EMPTY,
+                                    videoTitle = dto.videoTitle ?: "Vídeo",
+                                    config = parsedConfig,
+                                    presetId = dto.presetId,
+                                    quality = parsedQuality,
+                                    status = parsedStatus,
+                                    progressPercent = (dto.progressPercent ?: 0).coerceIn(0, 100),
+                                    stageName = dto.stageName ?: "Na fila",
+                                    estimatedSecondsRemaining = dto.estimatedSecondsRemaining ?: 0L,
+                                    outputUri = dto.outputUriString?.let { if (it.isNotBlank()) Uri.parse(it) else null },
+                                    outputFilePath = dto.outputFilePath,
+                                    errorMessage = dto.errorMessage,
+                                    createdAt = dto.createdAt ?: System.currentTimeMillis(),
+                                    completedAt = dto.completedAt
+                                )
+                            } catch (e: Exception) {
+                                null
+                            }
                         }
-                        _tasks.value = models
+                        _tasks.value = models.distinctBy { it.id }
                         DebugCenter.log(
                             LogModule.WorkManager,
                             LogLevel.INFO,
-                            "Fila restaurada do disco: ${models.size} tarefas encontradas."
+                            "Fila restaurada do disco: ${_tasks.value.size} tarefas encontradas."
                         )
                     }
                 }
@@ -278,7 +282,7 @@ object StabilizationQueueManager {
         }
 
         _tasks.value = updatedList
-        saveTasksToDisk()
+        saveTasksToDiskThrottled()
     }
 
     fun markTaskCompleted(
@@ -357,6 +361,41 @@ object StabilizationQueueManager {
         }
 
         _tasks.value = updatedList
+        saveTasksToDisk()
+    }
+
+    private var lastSaveDiskTime = 0L
+
+    private fun saveTasksToDiskThrottled() {
+        val now = System.currentTimeMillis()
+        if (now - lastSaveDiskTime > 1500L) {
+            lastSaveDiskTime = now
+            saveTasksToDisk()
+        }
+    }
+
+    fun cancelTask(context: Context, taskId: String) {
+        init(context)
+        try {
+            WorkManager.getInstance(context).cancelAllWorkByTag("stabilize_task_$taskId")
+        } catch (e: Exception) {
+            DebugCenter.log(
+                LogModule.WorkManager,
+                LogLevel.WARN,
+                "Falha ao cancelar WorkManager para tarefa $taskId: ${e.message}"
+            )
+        }
+        val currentList = _tasks.value
+        _tasks.value = currentList.map { task ->
+            if (task.id == taskId) {
+                task.copy(
+                    status = QueueStatus.FALHOU,
+                    stageName = "Cancelado",
+                    errorMessage = "Interrompido pelo usuário",
+                    completedAt = System.currentTimeMillis()
+                )
+            } else task
+        }
         saveTasksToDisk()
     }
 

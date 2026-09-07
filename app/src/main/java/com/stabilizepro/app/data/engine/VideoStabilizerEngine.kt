@@ -20,7 +20,9 @@ import com.stabilizepro.app.logs.LogLevel
 import com.stabilizepro.app.logs.LogModule
 import com.stabilizepro.app.presets.ColorGradingParams
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.opencv.android.Utils
 import org.opencv.core.Core
@@ -98,8 +100,8 @@ class VideoStabilizerEngine(private val context: Context) {
         var targetWidth = rawVideoWidth
         var targetHeight = rawVideoHeight
         val isPortrait = targetHeight > targetWidth
-        val maxLongSide = 1920
-        val maxShortSide = 1080
+        val maxLongSide = 3840
+        val maxShortSide = 2160
         val maxWidth = if (isPortrait) maxShortSide else maxLongSide
         val maxHeight = if (isPortrait) maxLongSide else maxShortSide
 
@@ -186,6 +188,7 @@ class VideoStabilizerEngine(private val context: Context) {
         val motionStartTime = System.currentTimeMillis()
 
         while (currentTimeUs < durationMs * 1000L) {
+            currentCoroutineContext().ensureActive()
             val frameBitmap = getFrameSafely(
                 retriever = retriever,
                 timeUs = currentTimeUs,
@@ -230,20 +233,22 @@ class VideoStabilizerEngine(private val context: Context) {
             frameIndex++
             currentTimeUs += frameStepUs
 
-            val percent = 8 + ((frameIndex.toFloat() / estimatedTotalFrames.toFloat()) * 32).toInt().coerceIn(0, 32)
-            val elapsedSec = (System.currentTimeMillis() - motionStartTime) / 1000.0
-            val fpsProcessed = if (elapsedSec > 0) frameIndex / elapsedSec else 1.0
-            val remainingSec = (((estimatedTotalFrames - frameIndex) / fpsProcessed) + (estimatedTotalFrames / fpsProcessed)).toLong().coerceAtLeast(1L)
+            if (frameIndex % (fps.roundToInt().coerceAtLeast(1) / 2) == 0 || frameIndex >= estimatedTotalFrames) {
+                val percent = 8 + ((frameIndex.toFloat() / estimatedTotalFrames.toFloat()) * 32).toInt().coerceIn(0, 32)
+                val elapsedSec = (System.currentTimeMillis() - motionStartTime) / 1000.0
+                val fpsProcessed = if (elapsedSec > 0) frameIndex / elapsedSec else 1.0
+                val remainingSec = (((estimatedTotalFrames - frameIndex) / fpsProcessed) + (estimatedTotalFrames / fpsProcessed)).toLong().coerceAtLeast(1L)
 
-            onProgress(
-                StabilizationProgress(
-                    stage = StabilizationStage.DETECTING_MOTION,
-                    progressPercent = percent,
-                    currentFrame = frameIndex,
-                    totalFrames = estimatedTotalFrames,
-                    estimatedSecondsRemaining = remainingSec
+                onProgress(
+                    StabilizationProgress(
+                        stage = StabilizationStage.DETECTING_MOTION,
+                        progressPercent = percent,
+                        currentFrame = frameIndex,
+                        totalFrames = estimatedTotalFrames,
+                        estimatedSecondsRemaining = remainingSec
+                    )
                 )
-            )
+            }
         }
 
         prevGray.release()
@@ -369,6 +374,7 @@ class VideoStabilizerEngine(private val context: Context) {
 
         try {
             for (i in 0 until totalActualFrames) {
+                currentCoroutineContext().ensureActive()
                 val rawBitmap = getFrameSafely(
                     retriever = retriever,
                     timeUs = currentTimeUs,
@@ -468,20 +474,22 @@ class VideoStabilizerEngine(private val context: Context) {
 
                 currentTimeUs += frameStepUs
 
-                val renderPercent = 54 + (((i + 1).toFloat() / totalActualFrames.toFloat()) * 40).toInt().coerceIn(0, 40)
-                val elapsedRenderSec = (System.currentTimeMillis() - renderStartTime) / 1000.0
-                val renderFps = if (elapsedRenderSec > 0) (i + 1) / elapsedRenderSec else 1.0
-                val remainingRenderSec = ((totalActualFrames - (i + 1)) / renderFps).toLong().coerceAtLeast(1L)
+                if ((i + 1) % (fps.roundToInt().coerceAtLeast(1) / 2) == 0 || (i + 1) == totalActualFrames) {
+                    val renderPercent = 54 + (((i + 1).toFloat() / totalActualFrames.toFloat()) * 40).toInt().coerceIn(0, 40)
+                    val elapsedRenderSec = (System.currentTimeMillis() - renderStartTime) / 1000.0
+                    val renderFps = if (elapsedRenderSec > 0) (i + 1) / elapsedRenderSec else 1.0
+                    val remainingRenderSec = ((totalActualFrames - (i + 1)) / renderFps).toLong().coerceAtLeast(1L)
 
-                onProgress(
-                    StabilizationProgress(
-                        stage = StabilizationStage.RECREATING_VIDEO,
-                        progressPercent = renderPercent,
-                        currentFrame = i + 1,
-                        totalFrames = totalActualFrames,
-                        estimatedSecondsRemaining = remainingRenderSec
+                    onProgress(
+                        StabilizationProgress(
+                            stage = StabilizationStage.RECREATING_VIDEO,
+                            progressPercent = renderPercent,
+                            currentFrame = i + 1,
+                            totalFrames = totalActualFrames,
+                            estimatedSecondsRemaining = remainingRenderSec
+                        )
                     )
-                )
+                }
             }
 
             // Signal EOS to encoder with retries
@@ -765,26 +773,41 @@ class VideoStabilizerEngine(private val context: Context) {
     private fun applyColorGrading(mat: Mat, params: ColorGradingParams) {
         if (params.isNeutral()) return
 
-        // 1. Exposure, Brightness and Contrast
+        // 1. Exposure, Brightness, Shadows and Contrast
         val exposureScale = Math.pow(2.0, params.exposure.toDouble()).toFloat()
         val alpha = (params.contrast * exposureScale).toDouble().coerceIn(0.2, 3.0)
         val beta = (params.brightness * 35.0) + (1.0 - params.contrast) * 64.0 + (params.shadows * 15.0)
         mat.convertTo(mat, -1, alpha, beta)
 
-        // 2. Temperature adjustment (Warm: boost R, reduce B)
-        if (kotlin.math.abs(params.temperature) > 0.02f) {
+        // 2. Sharpness & Definition (Unsharp Mask filter via OpenCV)
+        if (params.sharpness > 0.02f || params.definition > 0.02f) {
+            val blurMat = Mat()
+            val totalSharp = (params.sharpness * 1.5 + params.definition * 0.8).toDouble()
+            Imgproc.GaussianBlur(mat, blurMat, Size(0.0, 0.0), 3.0)
+            Core.addWeighted(mat, 1.0 + totalSharp, blurMat, -totalSharp, 0.0, mat)
+            blurMat.release()
+        }
+
+        // 3. Temperature & Tint adjustment (Warm: boost R, reduce B; Tint: shift G)
+        if (kotlin.math.abs(params.temperature) > 0.02f || kotlin.math.abs(params.tint) > 0.02f) {
             val channels = ArrayList<Mat>(4)
             Core.split(mat, channels)
             if (channels.size >= 3) {
                 val tempOffset = (params.temperature * 25.0).toDouble()
-                Core.add(channels[0], org.opencv.core.Scalar(tempOffset), channels[0])
-                Core.subtract(channels[2], org.opencv.core.Scalar(tempOffset), channels[2])
+                val tintOffset = (params.tint * 20.0).toDouble()
+                if (kotlin.math.abs(params.temperature) > 0.02f) {
+                    Core.add(channels[0], org.opencv.core.Scalar(tempOffset), channels[0])
+                    Core.subtract(channels[2], org.opencv.core.Scalar(tempOffset), channels[2])
+                }
+                if (kotlin.math.abs(params.tint) > 0.02f) {
+                    Core.add(channels[1], org.opencv.core.Scalar(tintOffset), channels[1])
+                }
                 Core.merge(channels, mat)
             }
             for (ch in channels) ch.release()
         }
 
-        // 3. Saturation adjustment
+        // 4. Saturation & Vibrance adjustment
         if (kotlin.math.abs(params.saturation - 1.0f) > 0.05f || kotlin.math.abs(params.vibrance) > 0.05f) {
             val hsvMat = Mat()
             Imgproc.cvtColor(mat, hsvMat, Imgproc.COLOR_RGBA2RGB)

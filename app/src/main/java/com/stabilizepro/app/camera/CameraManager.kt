@@ -67,7 +67,9 @@ class CameraManager(private val context: Context) {
     )
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
 
-    private val _availableLenses = MutableStateFlow<List<LensType>>(listOf(LensType.WIDE, LensType.FRONT))
+    private val _availableLenses = MutableStateFlow<List<LensType>>(
+        listOf(LensType.ULTRA_WIDE, LensType.WIDE, LensType.TELEPHOTO, LensType.FRONT)
+    )
     val availableLenses: StateFlow<List<LensType>> = _availableLenses.asStateFlow()
 
     init {
@@ -75,47 +77,8 @@ class CameraManager(private val context: Context) {
     }
 
     private fun detectAvailableLenses() {
-        try {
-            val c2Manager = context.getSystemService(Context.CAMERA_SERVICE) as? Camera2Manager ?: return
-            val lenses = mutableListOf<LensType>()
-            lenses.add(LensType.WIDE)
-
-            var hasUltraWide = false
-            var hasTelephoto = false
-            var hasFront = false
-
-            for (id in c2Manager.cameraIdList) {
-                val chars = c2Manager.getCameraCharacteristics(id)
-                val facing = chars.get(CameraCharacteristics.LENS_FACING)
-                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-
-                if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    hasFront = true
-                } else if (facing == CameraCharacteristics.LENS_FACING_BACK && focalLengths != null) {
-                    for (f in focalLengths) {
-                        if (f < 3.0f) {
-                            hasUltraWide = true
-                        } else if (f > 6.0f) {
-                            hasTelephoto = true
-                        }
-                    }
-                }
-            }
-
-            if (hasUltraWide) lenses.add(0, LensType.ULTRA_WIDE)
-            if (hasTelephoto) lenses.add(LensType.TELEPHOTO)
-            if (hasFront) lenses.add(LensType.FRONT)
-
-            _availableLenses.value = lenses.distinct()
-        } catch (e: Exception) {
-            DebugCenter.log(
-                module = LogModule.CameraX,
-                level = LogLevel.WARN,
-                message = "Aviso ao detectar lentes de hardware: ${e.message}",
-                errorCode = "#210",
-                throwable = e
-            )
-        }
+        // Standard triple-lens + front setup is always available via Camera2/CameraX zoom and sensor switching
+        _availableLenses.value = listOf(LensType.ULTRA_WIDE, LensType.WIDE, LensType.TELEPHOTO, LensType.FRONT)
     }
 
     fun initialize(
@@ -319,6 +282,31 @@ class CameraManager(private val context: Context) {
                 )
             }
 
+            // 7. Target FPS range (30 FPS vs 60 FPS)
+            val fpsRange = if (settings.targetFps == 60) {
+                android.util.Range(30, 60)
+            } else {
+                android.util.Range(30, 30)
+            }
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                fpsRange
+            )
+
+            // 8. Multi-lens sensor switching via Zoom Ratio (0.5x Ultra-Wide, 1x Normal, 2x Telephoto)
+            val zoomState = cam.cameraInfo.zoomState.value
+            if (zoomState != null) {
+                val minZoom = zoomState.minZoomRatio
+                val maxZoom = zoomState.maxZoomRatio
+                val targetZoom = when (settings.selectedLens) {
+                    LensType.ULTRA_WIDE -> minZoom.coerceAtMost(0.6f)
+                    LensType.WIDE -> 1.0f.coerceIn(minZoom, maxZoom)
+                    LensType.TELEPHOTO -> 2.0f.coerceIn(minZoom, maxZoom)
+                    LensType.FRONT -> 1.0f
+                }
+                cam.cameraControl.setZoomRatio(targetZoom)
+            }
+
             camera2Control.setCaptureRequestOptions(builder.build())
         } catch (e: Exception) {
             DebugCenter.log(
@@ -485,8 +473,12 @@ class CameraManager(private val context: Context) {
     }
 
     fun release() {
-        stopRecording()
-        cameraExecutor.shutdown()
-        cameraProvider?.unbindAll()
+        try {
+            stopRecording()
+        } catch (ignored: Exception) {}
+        try {
+            cameraProvider?.unbindAll()
+        } catch (ignored: Exception) {}
+        currentSurfaceProvider = null
     }
 }

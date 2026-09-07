@@ -148,19 +148,31 @@ class StabilizationWorker(
             )
         } catch (e: Exception) {
             DebugCenter.activePipeline = "Ocioso"
-            val errorMsg = e.localizedMessage ?: "Erro desconhecido durante estabilização"
+            val isCancelled = e is kotlinx.coroutines.CancellationException || isStopped
+            val errorMsg = if (isCancelled) "Interrompido pelo usuário" else (e.localizedMessage ?: "Erro desconhecido durante estabilização")
 
             StabilizationQueueManager.markTaskFailed(taskId, errorMsg, videoTitle)
 
-            DebugCenter.logAndToastError(
-                context = appContext,
-                module = LogModule.WorkManager,
-                errorCode = "#401",
-                detailedMessage = "Falha no worker de estabilização: $errorMsg",
-                throwable = e
-            )
+            try {
+                notificationManager.cancel(NOTIFICATION_ID)
+            } catch (ignored: Exception) {}
 
-            showFailureNotification(videoTitle, errorMsg)
+            if (!isCancelled) {
+                DebugCenter.logAndToastError(
+                    context = appContext,
+                    module = LogModule.WorkManager,
+                    errorCode = "#401",
+                    detailedMessage = "Falha no worker de estabilização: $errorMsg",
+                    throwable = e
+                )
+                showFailureNotification(videoTitle, errorMsg)
+            } else {
+                DebugCenter.log(
+                    LogModule.WorkManager,
+                    LogLevel.INFO,
+                    "Processamento cancelado pelo usuário: $videoTitle"
+                )
+            }
             Result.failure()
         }
     }
@@ -199,6 +211,8 @@ class StabilizationWorker(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val cancelPendingIntent = androidx.work.WorkManager.getInstance(appContext).createCancelPendingIntent(id)
+
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setContentTitle("Estabilizando: $title")
             .setContentText(content)
@@ -206,6 +220,7 @@ class StabilizationWorker(
             .setProgress(100, progress, false)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Interromper", cancelPendingIntent)
             .setOnlyAlertOnce(true)
             .build()
 
@@ -226,12 +241,22 @@ class StabilizationWorker(
         }
     }
 
+    private var lastNotifyTime = 0L
+    private var lastNotifyProgress = -1
+
     private fun updateNotification(
         title: String,
         progress: Int,
         stage: String,
         secondsRemaining: Long
     ) {
+        val now = System.currentTimeMillis()
+        if (progress - lastNotifyProgress < 2 && now - lastNotifyTime < 1500L && progress < 100) {
+            return
+        }
+        lastNotifyTime = now
+        lastNotifyProgress = progress
+
         try {
             val etaText = if (secondsRemaining > 0) " (~${secondsRemaining}s restantes)" else ""
             val content = "$stage • $progress%$etaText"
@@ -247,6 +272,8 @@ class StabilizationWorker(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            val cancelPendingIntent = androidx.work.WorkManager.getInstance(appContext).createCancelPendingIntent(id)
+
             val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
                 .setContentTitle("Estabilizando: $title")
                 .setContentText(content)
@@ -254,6 +281,7 @@ class StabilizationWorker(
                 .setProgress(100, progress, false)
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Interromper", cancelPendingIntent)
                 .setOnlyAlertOnce(true)
                 .build()
 

@@ -6,6 +6,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.util.Log
+import com.stabilizepro.app.camera.CameraAspectRatio
 import com.stabilizepro.app.logs.DebugCenter
 import com.stabilizepro.app.logs.LogLevel
 import com.stabilizepro.app.logs.LogModule
@@ -44,6 +45,7 @@ class CameraGlRenderer(
     }
 
     private val stMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private val mvpMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
 
     private var program = 0
     private var textureId = 0
@@ -53,6 +55,7 @@ class CameraGlRenderer(
     // Uniform locations
     private var aPositionLoc = -1
     private var aTextureCoordLoc = -1
+    private var uMVPMatrixLoc = -1
     private var uSTMatrixLoc = -1
     private var sTextureLoc = -1
     private var uExposureLoc = -1
@@ -73,6 +76,8 @@ class CameraGlRenderer(
 
     @Volatile
     private var currentParams: ColorGradingParams = ColorGradingParams()
+    @Volatile
+    private var currentAspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_16_9
 
     private var viewportWidth = 1080
     private var viewportHeight = 1920
@@ -83,6 +88,10 @@ class CameraGlRenderer(
 
     fun updateColorGrading(params: ColorGradingParams) {
         currentParams = params
+    }
+
+    fun updateAspectRatio(ratio: CameraAspectRatio) {
+        currentAspectRatio = ratio
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -100,6 +109,7 @@ class CameraGlRenderer(
 
         aPositionLoc = GLES20.glGetAttribLocation(program, "aPosition")
         aTextureCoordLoc = GLES20.glGetAttribLocation(program, "aTextureCoord")
+        uMVPMatrixLoc = GLES20.glGetUniformLocation(program, "uMVPMatrix")
         uSTMatrixLoc = GLES20.glGetUniformLocation(program, "uSTMatrix")
         sTextureLoc = GLES20.glGetUniformLocation(program, "sTexture")
 
@@ -189,8 +199,21 @@ class CameraGlRenderer(
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
         GLES20.glUniform1i(sTextureLoc, 0)
 
-        // Pass transform matrix
+        // Pass transform and aspect ratio MVP matrices
         GLES20.glUniformMatrix4fv(uSTMatrixLoc, 1, false, stMatrix, 0)
+
+        Matrix.setIdentityM(mvpMatrix, 0)
+        val viewAspect = viewportWidth.toFloat() / viewportHeight.coerceAtLeast(1).toFloat()
+        val targetAspect = currentAspectRatio.ratioValue
+
+        if (viewAspect < targetAspect) {
+            val scale = targetAspect / viewAspect
+            Matrix.scaleM(mvpMatrix, 0, scale, 1.0f, 1.0f)
+        } else {
+            val scale = viewAspect / targetAspect
+            Matrix.scaleM(mvpMatrix, 0, 1.0f, scale, 1.0f)
+        }
+        GLES20.glUniformMatrix4fv(uMVPMatrixLoc, 1, false, mvpMatrix, 0)
 
         // Pass all 14 color grading uniforms
         val params = currentParams
@@ -228,16 +251,21 @@ class CameraGlRenderer(
     }
 
     fun release() {
-        if (textureId != 0) {
-            val textures = intArrayOf(textureId)
-            GLES20.glDeleteTextures(1, textures, 0)
-            textureId = 0
+        try {
+            if (textureId != 0) {
+                val textures = intArrayOf(textureId)
+                GLES20.glDeleteTextures(1, textures, 0)
+                textureId = 0
+            }
+            if (program != 0) {
+                GLES20.glDeleteProgram(program)
+                program = 0
+            }
+            surfaceTexture?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Aviso ao liberar CameraGlRenderer: ${e.message}")
+        } finally {
+            surfaceTexture = null
         }
-        if (program != 0) {
-            GLES20.glDeleteProgram(program)
-            program = 0
-        }
-        surfaceTexture?.release()
-        surfaceTexture = null
     }
 }
