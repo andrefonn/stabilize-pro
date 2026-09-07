@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Electric Blue Circle Glow -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:fillAlpha="0.4"
+        android:pathData="M54,54m-38,0a38,38 0 1,1 76,0a38,38 0 1,1 -76,0" />
+
+    <!-- Electric Blue Main Circle -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M54,54m-32,0a32,32 0 1,1 64,0a32,32 0 1,1 -64,0" />
+
+    <!-- Inner Circle Accent for Depth -->
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M54,54m-27,0a27,27 0 1,1 54,0a27,27 0 1,1 -54,0" />
+
+    <!-- Stabilization Curved Line 1 (Upper Left Arc) -->
+    <path
+        android:strokeColor="#93C5FD"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M34,44 C34,32 44,24 58,24" />
+
+    <!-- Stabilization Curved Line 2 (Lower Right Arc) -->
+    <path
+        android:strokeColor="#93C5FD"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M74,64 C74,76 64,84 50,84" />
+
+    <!-- Minimalist Smartphone Body Background (Dark obsidian) -->
+    <path
+        android:fillColor="#0F172A"
+        android:pathData="M44,35 h20 a4,4 0 0 1 4,4 v30 a4,4 0 0 1 -4,4 h-20 a4,4 0 0 1 -4,-4 v-30 a4,4 0 0 1 4,-4 z" />
+
+    <!-- Minimalist Smartphone Outline (Clean White) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M44,35 h20 a4,4 0 0 1 4,4 v30 a4,4 0 0 1 -4,4 h-20 a4,4 0 0 1 -4,-4 v-30 a4,4 0 0 1 4,-4 z" />
+
+    <!-- Phone Screen Lens / Top Camera Sensor -->
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M54,39m-1.2,0a1.2,1.2 0 1,1 2.4,0a1.2,1.2 0 1,1 -2.4,0" />
+
+    <!-- Phone Screen Gimbal / Horizon Reticle -->
+    <path
+        android:strokeColor="#3B82F6"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M47,54 L61,54" />
+    <path
+        android:strokeColor="#60A5FA"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M54,49 L54,59" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M54,54m-2.5,0a2.5,2.5 0 1,1 5,0a2.5,2.5 0 1,1 -5,0" />
+
+    <!-- Phone Bottom Home Indicator -->
+    <path
+        android:strokeColor="#94A3B8"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M50,70 L58,70" />
+
+</vector>

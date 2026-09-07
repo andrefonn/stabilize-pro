@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Subtle Outer Glow -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:fillAlpha="0.3"
+        android:pathData="M60,60m-48,0a48,48 0 1,1 96,0a48,48 0 1,1 -96,0" />
+
+    <!-- Electric Blue Main Circle -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M60,60m-40,0a40,40 0 1,1 80,0a40,40 0 1,1 -80,0" />
+
+    <!-- Inner Core Circle -->
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M60,60m-34,0a34,34 0 1,1 68,0a34,34 0 1,1 -68,0" />
+
+    <!-- Stabilization Curved Line Top Left -->
+    <path
+        android:strokeColor="#93C5FD"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M35,46 C35,32 48,22 65,22" />
+
+    <!-- Stabilization Curved Line Bottom Right -->
+    <path
+        android:strokeColor="#93C5FD"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M85,74 C85,88 72,98 55,98" />
+
+    <!-- Minimalist Smartphone Body -->
+    <path
+        android:fillColor="#090D16"
+        android:pathData="M48,36 h24 a5,5 0 0 1 5,5 v38 a5,5 0 0 1 -5,5 h-24 a5,5 0 0 1 -5,-5 v-38 a5,5 0 0 1 5,-5 z" />
+
+    <!-- Minimalist Smartphone Outline -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M48,36 h24 a5,5 0 0 1 5,5 v38 a5,5 0 0 1 -5,5 h-24 a5,5 0 0 1 -5,-5 v-38 a5,5 0 0 1 5,-5 z" />
+
+    <!-- Phone Camera Sensor -->
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M60,41m-1.5,0a1.5,1.5 0 1,1 3,0a1.5,1.5 0 1,1 -3,0" />
+
+    <!-- Reticle Horizon Crosshair -->
+    <path
+        android:strokeColor="#3B82F6"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M51,60 L69,60" />
+    <path
+        android:strokeColor="#60A5FA"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M60,53 L60,67" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:pathData="M60,60m-3,0a3,3 0 1,1 6,0a3,3 0 1,1 -6,0" />
+
+    <!-- Phone Bottom Home Indicator -->
+    <path
+        android:strokeColor="#94A3B8"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M55,79 L65,79" />
+
+</vector>
