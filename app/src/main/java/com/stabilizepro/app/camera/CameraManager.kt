@@ -8,6 +8,8 @@ import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.Camera
@@ -40,7 +42,12 @@ class CameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "CameraManager"
+        private const val PREFS_NAME = "stabilize_camera_prefs"
+        private const val KEY_AUTO_STABILIZE = "key_auto_stabilize_recording"
     }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
@@ -53,7 +60,11 @@ class CameraManager(private val context: Context) {
     private var currentLifecycleOwner: LifecycleOwner? = null
     private var currentSurfaceProvider: Preview.SurfaceProvider? = null
 
-    private val _settings = MutableStateFlow(CameraSettings())
+    private val _settings = MutableStateFlow(
+        CameraSettings(
+            autoStabilizeAfterRecording = prefs.getBoolean(KEY_AUTO_STABILIZE, true)
+        )
+    )
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
 
     private val _availableLenses = MutableStateFlow<List<LensType>>(listOf(LensType.WIDE, LensType.FRONT))
@@ -135,6 +146,9 @@ class CameraManager(private val context: Context) {
 
     fun updateSettings(newSettings: CameraSettings) {
         val oldSettings = _settings.value
+        if (oldSettings.autoStabilizeAfterRecording != newSettings.autoStabilizeAfterRecording) {
+            prefs.edit().putBoolean(KEY_AUTO_STABILIZE, newSettings.autoStabilizeAfterRecording).apply()
+        }
         _settings.value = newSettings
 
         // If lens or mode or quality changed, rebind use cases
@@ -324,19 +338,25 @@ class CameraManager(private val context: Context) {
         val capture = imageCapture ?: run {
             val ex = IllegalStateException("ImageCapture não está inicializado.")
             DebugCenter.logAndToastError(context, LogModule.CameraX, "#206", ex.message ?: "", ex)
-            onError(ex)
+            mainHandler.post { onError(ex) }
             return
         }
 
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
         capture.takePicture(
             outputOptions,
-            cameraExecutor,
+            ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     val uri = outputFileResults.savedUri ?: Uri.fromFile(outputFile)
                     DebugCenter.log(LogModule.CameraX, LogLevel.INFO, "Foto salva com sucesso: ${uri.path}")
-                    onPhotoSaved(uri)
+                    mainHandler.post {
+                        try {
+                            onPhotoSaved(uri)
+                        } catch (t: Throwable) {
+                            DebugCenter.log(LogModule.CameraX, LogLevel.ERROR, "Erro no callback onPhotoSaved: ${t.message}", throwable = t)
+                        }
+                    }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -347,7 +367,13 @@ class CameraManager(private val context: Context) {
                         "Falha ao capturar foto: ${exception.message}",
                         exception
                     )
-                    onError(exception)
+                    mainHandler.post {
+                        try {
+                            onError(exception)
+                        } catch (t: Throwable) {
+                            DebugCenter.log(LogModule.CameraX, LogLevel.ERROR, "Erro no callback onError: ${t.message}", throwable = t)
+                        }
+                    }
                 }
             }
         )
@@ -361,7 +387,7 @@ class CameraManager(private val context: Context) {
         val vCapture = videoCapture ?: run {
             val ex = IllegalStateException("VideoCapture não está inicializado.")
             DebugCenter.logAndToastError(context, LogModule.CameraX, "#207", ex.message ?: "", ex)
-            onError(ex)
+            mainHandler.post { onError(ex) }
             return
         }
 
@@ -382,7 +408,7 @@ class CameraManager(private val context: Context) {
 
             var recordingStartTime = 0L
 
-            activeRecording = pendingRecording.start(cameraExecutor) { event ->
+            activeRecording = pendingRecording.start(ContextCompat.getMainExecutor(context)) { event ->
                 when (event) {
                     is VideoRecordEvent.Start -> {
                         recordingStartTime = System.currentTimeMillis()
@@ -408,13 +434,25 @@ class CameraManager(private val context: Context) {
                                 ex.message ?: "",
                                 ex
                             )
-                            onError(ex)
+                            mainHandler.post {
+                                try {
+                                    onError(ex)
+                                } catch (t: Throwable) {
+                                    DebugCenter.log(LogModule.CameraX, LogLevel.ERROR, "Erro no callback onError: ${t.message}", throwable = t)
+                                }
+                            }
                         } else {
                             activeRecording = null
                             val uri = event.outputResults.outputUri
                             val finalUri = if (uri != Uri.EMPTY) uri else Uri.fromFile(outputFile)
                             DebugCenter.log(LogModule.CameraX, LogLevel.INFO, "Gravação finalizada: $finalUri")
-                            onVideoSaved(finalUri)
+                            mainHandler.post {
+                                try {
+                                    onVideoSaved(finalUri)
+                                } catch (t: Throwable) {
+                                    DebugCenter.log(LogModule.CameraX, LogLevel.ERROR, "Erro no callback onVideoSaved: ${t.message}", throwable = t)
+                                }
+                            }
                         }
                     }
                 }
@@ -427,14 +465,15 @@ class CameraManager(private val context: Context) {
                 "Falha ao iniciar gravação: ${e.message}",
                 e
             )
-            onError(e)
+            mainHandler.post { onError(e) }
         }
     }
 
     fun stopRecording() {
         try {
-            activeRecording?.stop()
+            val rec = activeRecording
             activeRecording = null
+            rec?.stop()
         } catch (e: Exception) {
             DebugCenter.log(
                 LogModule.CameraX,

@@ -53,7 +53,16 @@ object MediaMuxerInterleaver {
             var audioFormat: MediaFormat? = null
 
             try {
-                audioExtractor.setDataSource(context, audioSourceUri, null)
+                if (audioSourceUri.scheme == "content") {
+                    audioExtractor.setDataSource(context, audioSourceUri, null)
+                } else {
+                    val path = audioSourceUri.path ?: ""
+                    if (File(path).exists()) {
+                        audioExtractor.setDataSource(path)
+                    } else {
+                        audioExtractor.setDataSource(context, audioSourceUri, null)
+                    }
+                }
                 for (i in 0 until audioExtractor.trackCount) {
                     val format = audioExtractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME) ?: ""

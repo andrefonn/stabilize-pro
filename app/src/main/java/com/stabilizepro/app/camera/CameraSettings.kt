@@ -33,5 +33,6 @@ data class CameraSettings(
     val focusDistance: Float = -1.0f, // -1.0f = Continuous Auto Focus (AF)
     val isHdrEnabled: Boolean = false,
     val isRecording: Boolean = false,
-    val recordingDurationSec: Long = 0L
+    val recordingDurationSec: Long = 0L,
+    val autoStabilizeAfterRecording: Boolean = true
 )

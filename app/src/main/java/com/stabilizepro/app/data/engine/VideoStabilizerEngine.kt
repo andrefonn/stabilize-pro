@@ -64,7 +64,16 @@ class VideoStabilizerEngine(private val context: Context) {
 
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(context, inputUri)
+            if (inputUri.scheme == "content") {
+                retriever.setDataSource(context, inputUri)
+            } else {
+                val path = inputUri.path ?: ""
+                if (File(path).exists()) {
+                    retriever.setDataSource(path)
+                } else {
+                    retriever.setDataSource(context, inputUri)
+                }
+            }
         } catch (e: Exception) {
             throw IllegalStateException("Não foi possível ler o arquivo de vídeo: ${e.localizedMessage}")
         }
@@ -110,7 +119,16 @@ class VideoStabilizerEngine(private val context: Context) {
         var hasAudioTrack = false
         val extractor = MediaExtractor()
         try {
-            extractor.setDataSource(context, inputUri, null)
+            if (inputUri.scheme == "content") {
+                extractor.setDataSource(context, inputUri, null)
+            } else {
+                val path = inputUri.path ?: ""
+                if (File(path).exists()) {
+                    extractor.setDataSource(path)
+                } else {
+                    extractor.setDataSource(context, inputUri, null)
+                }
+            }
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""

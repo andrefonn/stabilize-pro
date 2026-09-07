@@ -42,6 +42,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.HdrOn
@@ -51,6 +53,11 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
+import com.stabilizepro.app.data.repository.VideoRepositoryImpl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -257,8 +264,33 @@ fun CameraScreen(
                 }
             }
 
-            // Top action buttons: Shaders (Color Grading) & Camera2 Pro
+            // Top action buttons: Auto Stabilize, Camera2 Pro & Shaders
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Auto Stabilize Quick Toggle
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        val newState = !cameraSettings.autoStabilizeAfterRecording
+                        cameraManager.updateSettings(cameraSettings.copy(autoStabilizeAfterRecording = newState))
+                        Toast.makeText(
+                            context,
+                            if (newState) "Estabilização pós-gravação: ATIVADA" else "Estabilização pós-gravação: DESATIVADA",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color(0x88000000))
+                ) {
+                    Icon(
+                        imageVector = if (cameraSettings.autoStabilizeAfterRecording) Icons.Default.AutoAwesome else Icons.Default.Block,
+                        contentDescription = "Estabilização Pós-Gravação",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 IconButton(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -409,7 +441,46 @@ fun CameraScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Quick toggle chip for Auto-Stabilization in VIDEO mode
+            if (cameraSettings.captureMode == CaptureMode.VIDEO) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (cameraSettings.autoStabilizeAfterRecording) Color(0x3300D4FF) else Color(0x33333333))
+                        .border(1.dp, if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color(0x66666666), RoundedCornerShape(20.dp))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val newState = !cameraSettings.autoStabilizeAfterRecording
+                            cameraManager.updateSettings(cameraSettings.copy(autoStabilizeAfterRecording = newState))
+                            Toast.makeText(
+                                context,
+                                if (newState) "Estabilização pós-gravação ativada (vai para fila)" else "Estabilização pós-gravação desativada (salva direto na galeria)",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = if (cameraSettings.autoStabilizeAfterRecording) Icons.Default.AutoAwesome else Icons.Default.Block,
+                        contentDescription = "Estabilização Pós-Gravação",
+                        tint = if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color.LightGray,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = if (cameraSettings.autoStabilizeAfterRecording) "Estabilização Pós: ATIVADA" else "Estabilização Pós: DESATIVADA",
+                        color = if (cameraSettings.autoStabilizeAfterRecording) ElectricBlue else Color.LightGray,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            } else {
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // Main Trigger Button Bar
             Row(
@@ -516,24 +587,48 @@ fun CameraScreen(
                                     cameraManager.startRecording(
                                         outputFile = videoFile,
                                         onVideoSaved = { uri ->
-                                            // AUTOMATICALLY ENQUEUE TO WORKMANAGER QUEUE!
-                                            StabilizationQueueManager.enqueueTask(
-                                                context = context,
-                                                inputUri = uri,
-                                                videoTitle = videoFile.name,
-                                                config = StabilizationConfig(
-                                                    intensity = StabilizationIntensity.MEDIUM,
-                                                    preset = colorGradingParams
-                                                ),
-                                                presetId = selectedPresetId,
-                                                quality = ExportQuality.ORIGINAL
-                                            )
+                                            if (cameraSettings.autoStabilizeAfterRecording) {
+                                                StabilizationQueueManager.enqueueTask(
+                                                    context = context,
+                                                    inputUri = uri,
+                                                    videoTitle = videoFile.name,
+                                                    config = StabilizationConfig(
+                                                        intensity = StabilizationIntensity.MEDIUM,
+                                                        preset = colorGradingParams
+                                                    ),
+                                                    presetId = selectedPresetId,
+                                                    quality = ExportQuality.ORIGINAL
+                                                )
 
-                                            Toast.makeText(
-                                                context,
-                                                "Gravação salva! Estabilização iniciada na fila.",
-                                                Toast.LENGTH_LONG
-                                            ).show()
+                                                Toast.makeText(
+                                                    context,
+                                                    "Gravação salva! Estabilização iniciada na fila.",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            } else {
+                                                // Save directly to gallery without post-stabilization
+                                                CoroutineScope(Dispatchers.IO).launch {
+                                                    try {
+                                                        val repo = VideoRepositoryImpl(context)
+                                                        repo.saveVideoToGallery(videoFile)
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Vídeo salvo diretamente na galeria!",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Vídeo salvo: ${videoFile.name}",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         },
                                         onError = { ex ->
                                             Toast.makeText(
@@ -791,6 +886,25 @@ fun CameraScreen(
                             checked = cameraSettings.isHdrEnabled,
                             onCheckedChange = { enabled ->
                                 cameraManager.updateSettings(cameraSettings.copy(isHdrEnabled = enabled))
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = ElectricBlue)
+                        )
+                    }
+
+                    // Auto Stabilization Post-Recording Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Estabilização Pós-Gravação", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Processar vídeos gravados na fila em segundo plano", color = TextSecondary, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = cameraSettings.autoStabilizeAfterRecording,
+                            onCheckedChange = { enabled ->
+                                cameraManager.updateSettings(cameraSettings.copy(autoStabilizeAfterRecording = enabled))
                             },
                             colors = SwitchDefaults.colors(checkedThumbColor = ElectricBlue)
                         )

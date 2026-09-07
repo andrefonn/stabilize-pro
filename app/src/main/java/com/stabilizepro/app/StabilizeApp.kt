@@ -7,11 +7,14 @@ import com.stabilizepro.app.logs.LogLevel
 import com.stabilizepro.app.logs.LogModule
 import org.opencv.android.OpenCVLoader
 
+import com.stabilizepro.app.worker.StabilizationQueueManager
+
 class StabilizeApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
         DebugCenter.init(this)
+        StabilizationQueueManager.init(this)
         initOpenCv()
     }
 

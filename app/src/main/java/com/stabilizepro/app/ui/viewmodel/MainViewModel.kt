@@ -56,12 +56,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _saveGalleryStatus = MutableStateFlow<String?>(null)
     val saveGalleryStatus: StateFlow<String?> = _saveGalleryStatus.asStateFlow()
 
+    private var pendingTab: MainTab? = null
+
     fun onSplashFinished() {
-        _currentScreen.value = AppScreen.Main(MainTab.STABILIZER)
+        val target = pendingTab ?: MainTab.CAMERA
+        _currentScreen.value = AppScreen.Main(target)
     }
 
     fun selectTab(tab: MainTab) {
-        _currentScreen.value = AppScreen.Main(tab)
+        pendingTab = tab
+        if (_currentScreen.value !is AppScreen.Splash) {
+            _currentScreen.value = AppScreen.Main(tab)
+        }
     }
 
     fun onVideoSelected(uri: Uri) {

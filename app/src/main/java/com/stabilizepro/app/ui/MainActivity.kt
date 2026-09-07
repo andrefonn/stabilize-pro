@@ -42,6 +42,7 @@ import com.stabilizepro.app.ui.theme.TextMuted
 import com.stabilizepro.app.ui.theme.TextPrimary
 import com.stabilizepro.app.ui.viewmodel.AppScreen
 import com.stabilizepro.app.ui.viewmodel.MainTab
+import android.content.Intent
 import com.stabilizepro.app.ui.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleNavigationIntent(intent)
 
         setContent {
             StabilizeProTheme {
@@ -192,6 +194,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleNavigationIntent(intent)
+    }
+
+    private fun handleNavigationIntent(intent: Intent?) {
+        val target = intent?.getStringExtra("EXTRA_NAVIGATE_TO")
+        if (target == "QUEUE") {
+            viewModel.selectTab(MainTab.QUEUE)
         }
     }
 }
