@@ -1,6 +1,7 @@
 package com.stabilizepro.app.ui
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.stabilizepro.app.presets.PresetManager
 import com.stabilizepro.app.ui.screens.camera.CameraScreen
 import com.stabilizepro.app.ui.screens.home.HomeScreen
 import com.stabilizepro.app.ui.screens.processing.ProcessingScreen
@@ -44,6 +46,12 @@ import com.stabilizepro.app.ui.viewmodel.AppScreen
 import com.stabilizepro.app.ui.viewmodel.MainTab
 import android.content.Intent
 import com.stabilizepro.app.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
 
@@ -204,9 +212,65 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNavigationIntent(intent: Intent?) {
-        val target = intent?.getStringExtra("EXTRA_NAVIGATE_TO")
+        if (intent == null) return
+
+        // Regular deep-link navigation (e.g. from notification)
+        val target = intent.getStringExtra("EXTRA_NAVIGATE_TO")
         if (target == "QUEUE") {
             viewModel.selectTab(MainTab.QUEUE)
+            return
+        }
+
+        // Handle .sppreset import via ACTION_VIEW or ACTION_SEND
+        val uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            else -> null
+        } ?: return
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Copy the incoming URI stream to a temp file so PresetManager can read it
+                val tempFile = File(cacheDir, "import_${System.currentTimeMillis()}.sppreset")
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val presetManager = PresetManager(applicationContext)
+                val result = presetManager.importPresetFromFile(tempFile)
+                tempFile.delete()
+
+                withContext(Dispatchers.Main) {
+                    result.fold(
+                        onSuccess = { preset ->
+                            presetManager.saveCustomPreset(preset)
+                            viewModel.selectTab(MainTab.CAMERA)
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Preset \"${preset.name}\" importado com sucesso!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        onFailure = { error ->
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Erro ao importar preset: ${error.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Erro ao ler arquivo de preset: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
     }
 }

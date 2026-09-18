@@ -46,6 +46,11 @@ class VideoStabilizerEngine(private val context: Context) {
         private const val MAX_RENDER_HEIGHT = 1080
     }
 
+    private class PendingFrame(
+        val data: ByteBuffer,
+        val info: MediaCodec.BufferInfo
+    )
+
     suspend fun stabilize(
         inputUri: Uri,
         config: StabilizationConfig,
@@ -366,11 +371,17 @@ class VideoStabilizerEngine(private val context: Context) {
 
         val muxer = MediaMuxer(tempVideoFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var muxerVideoTrack = -1
+        var formatChanged = false
         var muxerStarted = false
+        var samplesWritten = 0L
+        var totalBytesWritten = 0L
+        var eosReceived = false
+        val pendingFrames = ArrayList<PendingFrame>()
 
         val bufferInfo = MediaCodec.BufferInfo()
         val renderStartTime = System.currentTimeMillis()
         currentTimeUs = 0L
+        var primaryError: Throwable? = null
 
         try {
             for (i in 0 until totalActualFrames) {
@@ -457,10 +468,20 @@ class VideoStabilizerEngine(private val context: Context) {
                         getVideoTrack = { muxerVideoTrack },
                         onTrackAdded = { trackIndex ->
                             muxerVideoTrack = trackIndex
+                            formatChanged = true
                             muxer.start()
                             muxerStarted = true
+                            Log.i(TAG, "[TRACK_ADDED] MediaMuxer iniciado com videoTrack=$trackIndex")
                         },
-                        isMuxerStarted = { muxerStarted }
+                        isMuxerStarted = { muxerStarted },
+                        pendingFrames = pendingFrames,
+                        onSampleWritten = { bytes ->
+                            samplesWritten++
+                            totalBytesWritten += bytes
+                        },
+                        onEosReceived = {
+                            eosReceived = true
+                        }
                     )
 
                     inputMat.release()
@@ -497,8 +518,9 @@ class VideoStabilizerEngine(private val context: Context) {
             for (attempt in 0 until 20) {
                 val inputIndex = encoder.dequeueInputBuffer(TIMEOUT_USEC)
                 if (inputIndex >= 0) {
-                    encoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    encoder.queueInputBuffer(inputIndex, 0, 0, currentTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                     eosQueued = true
+                    Log.i(TAG, "EOS sinalizado no MediaCodec com sucesso (timestamp=$currentTimeUs)")
                     break
                 }
                 delay(10)
@@ -513,25 +535,78 @@ class VideoStabilizerEngine(private val context: Context) {
                 getVideoTrack = { muxerVideoTrack },
                 onTrackAdded = { trackIndex ->
                     muxerVideoTrack = trackIndex
+                    formatChanged = true
                     muxer.start()
                     muxerStarted = true
+                    Log.i(TAG, "[TRACK_ADDED] MediaMuxer iniciado no drain final (videoTrack=$trackIndex)")
                 },
-                isMuxerStarted = { muxerStarted }
-            )
-        } finally {
-            try { encoder.stop() } catch (ignored: Exception) {}
-            try { encoder.release() } catch (ignored: Exception) {}
-            try {
-                if (muxerStarted) {
-                    muxer.stop()
+                isMuxerStarted = { muxerStarted },
+                pendingFrames = pendingFrames,
+                onSampleWritten = { bytes ->
+                    samplesWritten++
+                    totalBytesWritten += bytes
+                },
+                onEosReceived = {
+                    eosReceived = true
                 }
+            )
+        } catch (t: Throwable) {
+            primaryError = t
+            throw t
+        } finally {
+            // Sequência de liberação estrita conforme Regra 3:
+            // 1. muxer.stop() (apenas se muxerStarted == true e samplesWritten > 0)
+            try {
+                if (muxerStarted && samplesWritten > 0L) {
+                    Log.i(TAG, "[MUXER_STOP] Finalizando MediaMuxer com sucesso ($samplesWritten samples, $totalBytesWritten bytes)...")
+                    muxer.stop()
+                } else if (!muxerStarted) {
+                    Log.w(TAG, "[MUXER_NEVER_STARTED] MediaMuxer nunca foi iniciado")
+                } else {
+                    Log.w(TAG, "[MUXER_STOP] MediaMuxer iniciado porém nenhum sample foi escrito ($samplesWritten). Ignorando chamada a stop() para evitar IllegalStateException.")
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Erro ao parar MediaMuxer: ${e.message}", e)
+                if (primaryError == null) primaryError = e
+            }
+
+            // 2. muxer.release()
+            try {
                 muxer.release()
-            } catch (ignored: Exception) {}
-            try { retriever.release() } catch (ignored: Exception) {}
+            } catch (e: Throwable) {
+                Log.w(TAG, "Erro ao liberar MediaMuxer: ${e.message}")
+                if (primaryError == null) primaryError = e
+            }
+
+            // 3. encoder.stop()
+            try {
+                encoder.stop()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Erro ao parar MediaCodec: ${e.message}")
+                if (primaryError == null) primaryError = e
+            }
+
+            // 4. encoder.release()
+            try {
+                encoder.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Erro ao liberar MediaCodec: ${e.message}")
+                if (primaryError == null) primaryError = e
+            }
+
+            // 5. retriever.release()
+            try {
+                retriever.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Erro ao liberar MediaMetadataRetriever: ${e.message}")
+                if (primaryError == null) primaryError = e
+            }
+
+            pendingFrames.clear()
         }
 
         // -------------------------------------------------------------
-        // ETAPA 6: Finalizando MP4
+        // ETAPA 6: Validação Pré-MediaStore e Finalizando MP4
         // -------------------------------------------------------------
         onProgress(
             StabilizationProgress(
@@ -543,28 +618,69 @@ class VideoStabilizerEngine(private val context: Context) {
             )
         )
 
+        // Validação obrigatória pré-MediaStore conforme Regra 4
+        try {
+            check(formatChanged) { "Validação pré-MediaStore falhou: formatChanged == false (MediaCodec nunca emitiu INFO_OUTPUT_FORMAT_CHANGED)" }
+            check(muxerStarted) { "Validação pré-MediaStore falhou: muxerStarted == false (MediaMuxer nunca foi iniciado)" }
+            check(samplesWritten > 0L) { "Validação pré-MediaStore falhou: samplesWritten ($samplesWritten) <= 0" }
+            check(tempVideoFile.exists()) { "Validação pré-MediaStore falhou: arquivo temporário não encontrado (${tempVideoFile.absolutePath})" }
+            check(tempVideoFile.length() > 1024L) { "Validação pré-MediaStore falhou: arquivo temporário corrompido/vazio (${tempVideoFile.length()} bytes <= 1024L)" }
+        } catch (vEx: IllegalStateException) {
+            DebugCenter.logAndToastError(
+                context = context,
+                module = LogModule.MediaCodec,
+                errorCode = "#MP4_0B",
+                detailedMessage = "Validação pré-MediaStore falhou: ${vEx.message}",
+                throwable = vEx
+            )
+            try { if (tempVideoFile.exists()) tempVideoFile.delete() } catch (ignored: Exception) {}
+            try { if (finalOutputFile.exists()) finalOutputFile.delete() } catch (ignored: Exception) {}
+            throw vEx
+        }
+
         // Interleave original audio if requested and audio exists
-        if (config.keepOriginalAudio && hasAudioTrack && tempVideoFile.exists() && tempVideoFile.length() > 0) {
+        if (config.keepOriginalAudio && hasAudioTrack && tempVideoFile.exists() && tempVideoFile.length() > 1024L) {
+            if (finalOutputFile.exists()) {
+                finalOutputFile.delete()
+            }
             val interleavedOk = MediaMuxerInterleaver.interleave(
                 context = context,
                 videoOnlyFile = tempVideoFile,
                 audioSourceUri = inputUri,
                 outputFile = finalOutputFile
             )
-            if (interleavedOk && finalOutputFile.exists() && finalOutputFile.length() > 0) {
+            if (interleavedOk && finalOutputFile.exists() && finalOutputFile.length() > 1024L) {
                 tempVideoFile.delete()
             } else {
-                // If interleaving audio fails, fallback to video-only file safely
-                tempVideoFile.renameTo(finalOutputFile)
+                Log.w(TAG, "Multiplexação de áudio falhou ou gerou arquivo inválido. Utilizando vídeo estabilizado sem áudio.")
+                if (finalOutputFile.exists()) {
+                    finalOutputFile.delete()
+                }
+                val renamed = tempVideoFile.renameTo(finalOutputFile)
+                if (!renamed) {
+                    tempVideoFile.copyTo(finalOutputFile, overwrite = true)
+                    tempVideoFile.delete()
+                }
             }
         } else {
-            if (tempVideoFile.exists()) {
-                tempVideoFile.renameTo(finalOutputFile)
+            if (finalOutputFile.exists()) {
+                finalOutputFile.delete()
+            }
+            val renamed = tempVideoFile.renameTo(finalOutputFile)
+            if (!renamed) {
+                tempVideoFile.copyTo(finalOutputFile, overwrite = true)
+                tempVideoFile.delete()
             }
         }
 
-        if (!finalOutputFile.exists() || finalOutputFile.length() == 0L) {
-            throw IllegalStateException("Falha ao exportar vídeo final estabilizado.")
+        // Validação final do arquivo de saída estabilizado
+        if (!finalOutputFile.exists() || finalOutputFile.length() <= 1024L) {
+            val length = if (finalOutputFile.exists()) finalOutputFile.length() else 0L
+            try { if (finalOutputFile.exists()) finalOutputFile.delete() } catch (ignored: Exception) {}
+            try { if (tempVideoFile.exists()) tempVideoFile.delete() } catch (ignored: Exception) {}
+            val err = IllegalStateException("Falha crítica: vídeo final estabilizado tem $length bytes (<= 1024L). Publicação cancelada.")
+            DebugCenter.logAndToastError(context, LogModule.MediaCodec, "#MP4_0B", err.message ?: "", err)
+            throw err
         }
 
         val originalSize = getFileSize(context, inputUri)
@@ -670,10 +786,13 @@ class VideoStabilizerEngine(private val context: Context) {
         endOfStream: Boolean,
         getVideoTrack: () -> Int,
         onTrackAdded: (Int) -> Unit,
-        isMuxerStarted: () -> Boolean
+        isMuxerStarted: () -> Boolean,
+        pendingFrames: ArrayList<PendingFrame>,
+        onSampleWritten: (Long) -> Unit,
+        onEosReceived: () -> Unit
     ) {
         var consecutiveTimeouts = 0
-        val maxTimeouts = if (endOfStream) 25 else 4
+        val maxTimeouts = if (endOfStream) 40 else 4
 
         while (consecutiveTimeouts < maxTimeouts) {
             val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_USEC)
@@ -685,8 +804,19 @@ class VideoStabilizerEngine(private val context: Context) {
                     consecutiveTimeouts = 0
                     if (!isMuxerStarted()) {
                         val newFormat = encoder.outputFormat
+                        Log.i(TAG, "[FORMAT_CHANGED] Novo formato emitido pelo MediaCodec: $newFormat")
                         val trackIndex = muxer.addTrack(newFormat)
                         onTrackAdded(trackIndex)
+
+                        // Despejar imediatamente frames que foram acumulados antes do format changed
+                        if (pendingFrames.isNotEmpty()) {
+                            Log.i(TAG, "[SAMPLE_WRITTEN] Despejando ${pendingFrames.size} frames em buffer para MediaMuxer...")
+                            for (pending in pendingFrames) {
+                                muxer.writeSampleData(trackIndex, pending.data, pending.info)
+                                onSampleWritten(pending.info.size.toLong())
+                            }
+                            pendingFrames.clear()
+                        }
                     }
                 }
                 encoderStatus >= 0 -> {
@@ -698,16 +828,33 @@ class VideoStabilizerEngine(private val context: Context) {
                         }
 
                         val track = getVideoTrack()
-                        if (bufferInfo.size > 0 && isMuxerStarted() && track >= 0) {
-                            encodedData.position(bufferInfo.offset)
-                            encodedData.limit(bufferInfo.offset + bufferInfo.size)
-                            muxer.writeSampleData(track, encodedData, bufferInfo)
+                        if (bufferInfo.size > 0) {
+                            if (isMuxerStarted() && track >= 0) {
+                                encodedData.position(bufferInfo.offset)
+                                encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                                muxer.writeSampleData(track, encodedData, bufferInfo)
+                                onSampleWritten(bufferInfo.size.toLong())
+                            } else {
+                                // Preservar frames gerados antes de muxer.start()
+                                val copy = ByteBuffer.allocateDirect(bufferInfo.size)
+                                encodedData.position(bufferInfo.offset)
+                                encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                                copy.put(encodedData)
+                                copy.flip()
+                                val infoCopy = MediaCodec.BufferInfo().apply {
+                                    set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
+                                }
+                                pendingFrames.add(PendingFrame(data = copy, info = infoCopy))
+                                Log.d(TAG, "Frame acumulado em pendingFrames (#${pendingFrames.size}, tamanho=${bufferInfo.size})")
+                            }
                         }
                     }
 
                     encoder.releaseOutputBuffer(encoderStatus, false)
 
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        Log.i(TAG, "[EOS_RECEIVED] Sinal EOS recebido do encoder com sucesso")
+                        onEosReceived()
                         break
                     }
                 }
@@ -800,7 +947,11 @@ class VideoStabilizerEngine(private val context: Context) {
                     Core.subtract(channels[2], org.opencv.core.Scalar(tempOffset), channels[2])
                 }
                 if (kotlin.math.abs(params.tint) > 0.02f) {
-                    Core.add(channels[1], org.opencv.core.Scalar(tintOffset), channels[1])
+                    // Positive tint shifts toward magenta (reduces green, boosts red & blue)
+                    val greenShift = -(params.tint * 25.0).toDouble()
+                    Core.add(channels[1], org.opencv.core.Scalar(greenShift), channels[1])
+                    Core.add(channels[0], org.opencv.core.Scalar(-greenShift * 0.5), channels[0])
+                    Core.add(channels[2], org.opencv.core.Scalar(-greenShift * 0.5), channels[2])
                 }
                 Core.merge(channels, mat)
             }

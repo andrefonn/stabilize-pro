@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 class PresetManager(private val context: Context) {
 
@@ -131,9 +132,24 @@ class PresetManager(private val context: Context) {
             PresetModel(
                 id = "builtin_natural",
                 name = "Natural",
-                category = "Neutro",
+                category = "Otimizado",
                 iconName = "auto_awesome",
                 colorHex = "#00D2FF",
+                isBuiltIn = true,
+                params = ColorGradingParams(
+                    sharpness = 0.15f,
+                    definition = 0.10f,
+                    vibrance = 0.08f,
+                    shadows = 0.05f,
+                    highlights = -0.05f
+                )
+            ),
+            PresetModel(
+                id = "builtin_neutral",
+                name = "Neutro (Raw)",
+                category = "Comparação",
+                iconName = "block",
+                colorHex = "#9E9E9E",
                 isBuiltIn = true,
                 params = ColorGradingParams()
             )
@@ -224,5 +240,50 @@ class PresetManager(private val context: Context) {
 
     fun getPresetById(id: String): PresetModel? {
         return _presets.value.find { it.id == id }
+    }
+
+    /**
+     * Serializes a preset to a .sppreset file in the app cache directory.
+     * Returns the generated File so the caller can share it via FileProvider.
+     */
+    fun exportPresetToFile(preset: PresetModel): File {
+        // Always export as a non-built-in so the recipient can edit/delete it
+        val exportable = preset.copy(
+            id = UUID.randomUUID().toString(), // fresh ID on the recipient device
+            isBuiltIn = false
+        )
+        val json = gson.toJson(exportable)
+        // Sanitize name for use in filename (keep only alphanumeric, dash, underscore)
+        val safeName = preset.name.replace(Regex("[^A-Za-z0-9_\\-]"), "_")
+        val file = File(context.cacheDir, "${safeName}.sppreset")
+        file.writeText(json)
+        return file
+    }
+
+    /**
+     * Parses a .sppreset file and returns a [PresetModel] ready to be confirmed and saved.
+     * Assigns a new random ID so it never collides with existing presets.
+     */
+    fun importPresetFromFile(file: File): Result<PresetModel> {
+        return try {
+            val json = file.readText()
+            val preset = gson.fromJson(json, PresetModel::class.java)
+                ?: return Result.failure(IllegalArgumentException("Arquivo inválido ou corrompido"))
+            // Force fresh ID and non-built-in so it lands in the user's custom list
+            val imported = preset.copy(
+                id = UUID.randomUUID().toString(),
+                isBuiltIn = false
+            )
+            Result.success(imported)
+        } catch (e: Exception) {
+            DebugCenter.log(
+                module = LogModule.General,
+                level = LogLevel.ERROR,
+                message = "Erro ao importar preset: ${e.message}",
+                errorCode = "#804",
+                throwable = e
+            )
+            Result.failure(e)
+        }
     }
 }

@@ -21,9 +21,14 @@ class PresetManagerTest {
         assertTrue("Retrato must be present", names.contains("Retrato"))
         assertTrue("Noite must be present", names.contains("Noite"))
         assertTrue("Natural must be present", names.contains("Natural"))
+        assertTrue("Neutro (Raw) must be present", names.contains("Neutro (Raw)"))
+
+        val neutral = builtIns.first { it.name == "Neutro (Raw)" }
+        assertTrue("Neutro (Raw) preset must be strictly neutral", neutral.params.isNeutral())
 
         val natural = builtIns.first { it.name == "Natural" }
-        assertTrue("Natural preset must be neutral", natural.params.isNeutral())
+        assertFalse("Natural preset provides subtle auto-enhancement", natural.params.isNeutral())
+        assertTrue("Natural has calibrated sharpness", natural.params.sharpness > 0f)
 
         val cinematic = builtIns.first { it.name == "Cinemático" }
         assertFalse("Cinemático preset must not be neutral", cinematic.params.isNeutral())

@@ -18,6 +18,10 @@ import com.stabilizepro.app.domain.model.StabilizationProgress
 import com.stabilizepro.app.domain.model.StabilizationResult
 import com.stabilizepro.app.domain.model.VideoInfo
 import com.stabilizepro.app.domain.repository.VideoRepository
+import com.stabilizepro.app.logs.DebugCenter
+import com.stabilizepro.app.logs.LogLevel
+import com.stabilizepro.app.logs.LogModule
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -125,11 +129,46 @@ class VideoRepositoryImpl(
         return engine.stabilize(inputUri, config, onProgress)
     }
 
-    override suspend fun saveVideoToGallery(outputFile: File): Result<Uri> = withContext(Dispatchers.IO) {
+    override suspend fun saveVideoToGallery(outputFile: File): Result<Uri> {
+        // Validação pré-MediaStore estrita obrigatória conforme Regras 4 e 5
+        if (!outputFile.exists()) {
+            val err = IllegalStateException("Arquivo de vídeo não existe: ${outputFile.absolutePath}")
+            DebugCenter.log(LogModule.General, LogLevel.ERROR, err.message ?: "", errorCode = "#MP4_0B")
+            return Result.failure(err)
+        }
+        if (outputFile.length() <= 1024L) {
+            val length = outputFile.length()
+            try { outputFile.delete() } catch (ignored: Exception) {}
+            val err = IllegalStateException("Arquivo de vídeo corrompido ou com 0 bytes ($length bytes <= 1024L). Publicação no MediaStore cancelada.")
+            DebugCenter.log(LogModule.General, LogLevel.ERROR, err.message ?: "", errorCode = "#MP4_0B")
+            return Result.failure(err)
+        }
+        return saveVideoToGallery(Uri.fromFile(outputFile), outputFile.name)
+    }
+
+    override suspend fun saveVideoToGallery(uri: Uri, fileName: String?): Result<Uri> = withContext(Dispatchers.IO) {
+        var itemUri: Uri? = null
         try {
-            val filename = "STABILIZE_PRO_${System.currentTimeMillis()}.mp4"
+            val localPath = uri.path
+            val isLocalFile = uri.scheme == "file" || (localPath != null && File(localPath).exists())
+            val sourceFile = if (isLocalFile) File(localPath ?: "") else null
+
+            // Validação estrita de arquivo local antes de criar qualquer linha no MediaStore
+            if (sourceFile != null) {
+                if (!sourceFile.exists()) {
+                    throw IllegalStateException("Arquivo fonte local não existe: ${sourceFile.absolutePath}")
+                }
+                if (sourceFile.length() <= 1024L) {
+                    val len = sourceFile.length()
+                    try { sourceFile.delete() } catch (ignored: Exception) {}
+                    throw IllegalStateException("Arquivo fonte local tem $len bytes (<= 1024L). Publicação no MediaStore abortada.")
+                }
+            }
+
+            val baseName = fileName ?: "STABILIZE_PRO_${System.currentTimeMillis()}.mp4"
+            val sanitizedName = if (baseName.endsWith(".mp4", ignoreCase = true)) baseName else "$baseName.mp4"
             val contentValues = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Video.Media.DISPLAY_NAME, sanitizedName)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/StabilizePro")
@@ -144,23 +183,140 @@ class VideoRepositoryImpl(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI
             }
 
-            val itemUri = resolver.insert(collectionUri, contentValues)
-                ?: return@withContext Result.failure(Exception("Falha ao criar entrada no MediaStore"))
+            val insertedUri = resolver.insert(collectionUri, contentValues)
+                ?: throw IllegalStateException("Falha ao criar entrada no MediaStore")
+            itemUri = insertedUri
 
-            resolver.openOutputStream(itemUri)?.use { out ->
-                FileInputStream(outputFile).use { input ->
-                    input.copyTo(out)
+            var bytesWritten = 0L
+            val buffer = ByteArray(64 * 1024)
+
+            resolver.openOutputStream(insertedUri)?.use { out ->
+                val inputStream = if (sourceFile != null) {
+                    FileInputStream(sourceFile)
+                } else {
+                    resolver.openInputStream(uri)
+                        ?: throw IllegalStateException("Não foi possível abrir o fluxo de leitura do vídeo de origem.")
                 }
+
+                inputStream.use { input ->
+                    var bytes: Int
+                    while (input.read(buffer).also { bytes = it } >= 0) {
+                        if (bytes > 0) {
+                            out.write(buffer, 0, bytes)
+                            bytesWritten += bytes
+                        }
+                    }
+                }
+                out.flush()
+            } ?: throw IllegalStateException("Não foi possível abrir o fluxo de saída do MediaStore.")
+
+            // Validação pós-escrita: nunca publicar 0 bytes
+            if (bytesWritten <= 1024L) {
+                throw IllegalStateException("Gravação incompleta no MediaStore: apenas $bytesWritten bytes gravados (mínimo 1024B).")
+            }
+
+            // Publicar na galeria tornando visível
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                contentValues.clear()
+                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                resolver.update(insertedUri, contentValues, null, null)
+            }
+
+            DebugCenter.log(LogModule.General, LogLevel.INFO, "Vídeo publicado no MediaStore com sucesso: $insertedUri ($bytesWritten bytes)")
+            Result.success(insertedUri)
+        } catch (e: Exception) {
+            // Em caso de qualquer erro, purgar entrada órfã de 0 bytes criada no MediaStore
+            itemUri?.let { cleanupUri ->
+                try {
+                    context.contentResolver.delete(cleanupUri, null, null)
+                    Log.w("VideoRepositoryImpl", "Entrada órfã $cleanupUri removida do MediaStore após falha.")
+                } catch (ignored: Exception) {}
+            }
+            DebugCenter.log(
+                LogModule.General,
+                LogLevel.ERROR,
+                "Falha ao salvar vídeo no MediaStore: ${e.message}",
+                errorCode = "#MEDIASTORE_ERR"
+            )
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun savePhotoToGallery(photoFile: File, fileName: String?): Result<Uri> = withContext(Dispatchers.IO) {
+        var itemUri: Uri? = null
+        try {
+            if (!photoFile.exists()) {
+                throw IllegalStateException("Arquivo de foto não existe: ${photoFile.absolutePath}")
+            }
+            if (photoFile.length() <= 1024L) {
+                val len = photoFile.length()
+                throw IllegalStateException("Arquivo de foto vazio ou corrompido ($len bytes <= 1024B).")
+            }
+
+            val baseName = fileName ?: "PHOTO_${System.currentTimeMillis()}.jpg"
+            val sanitizedName = if (baseName.endsWith(".jpg", ignoreCase = true) || baseName.endsWith(".jpeg", ignoreCase = true)) baseName else "$baseName.jpg"
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, sanitizedName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.ORIENTATION, 0)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/StabilizePro")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+
+            val resolver = context.contentResolver
+            val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            }
+
+            val insertedUri = resolver.insert(collectionUri, contentValues)
+                ?: throw IllegalStateException("Falha ao criar entrada no MediaStore para foto.")
+            itemUri = insertedUri
+
+            var bytesWritten = 0L
+            val buffer = ByteArray(64 * 1024)
+
+            resolver.openOutputStream(insertedUri)?.use { out ->
+                FileInputStream(photoFile).use { input ->
+                    var bytes: Int
+                    while (input.read(buffer).also { bytes = it } >= 0) {
+                        if (bytes > 0) {
+                            out.write(buffer, 0, bytes)
+                            bytesWritten += bytes
+                        }
+                    }
+                }
+                out.flush()
+            } ?: throw IllegalStateException("Não foi possível abrir o fluxo de saída do MediaStore.")
+
+            if (bytesWritten <= 1024L) {
+                throw IllegalStateException("Gravação incompleta no MediaStore: apenas $bytesWritten bytes gravados.")
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 contentValues.clear()
-                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                resolver.update(itemUri, contentValues, null, null)
+                contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(insertedUri, contentValues, null, null)
             }
 
-            Result.success(itemUri)
+            DebugCenter.log(LogModule.General, LogLevel.INFO, "Foto publicada no MediaStore com sucesso: $insertedUri ($bytesWritten bytes)")
+            Result.success(insertedUri)
         } catch (e: Exception) {
+            itemUri?.let { cleanupUri ->
+                try {
+                    context.contentResolver.delete(cleanupUri, null, null)
+                    Log.w("VideoRepositoryImpl", "Entrada órfã $cleanupUri removida do MediaStore após falha.")
+                } catch (ignored: Exception) {}
+            }
+            DebugCenter.log(
+                LogModule.General,
+                LogLevel.ERROR,
+                "Falha ao salvar foto no MediaStore: ${e.message}",
+                errorCode = "#MEDIASTORE_IMG_ERR"
+            )
             Result.failure(e)
         }
     }

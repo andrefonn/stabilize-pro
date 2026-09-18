@@ -116,14 +116,15 @@ class StabilizationWorker(
             DebugCenter.lastProcessingDurationMs = durationMs
             DebugCenter.activePipeline = "Ocioso"
 
-            // Save stabilized video to MediaStore / Device Gallery so it appears in Photos/Gallery
+            // Validação obrigatória pré-MediaStore conforme Regra 4
             val finalOutputFile = File(result.outputFilePath)
-            val galleryUri = try {
-                val repository = VideoRepositoryImpl(appContext)
-                repository.saveVideoToGallery(finalOutputFile).getOrElse { result.stabilizedUri }
-            } catch (e: Exception) {
-                result.stabilizedUri
-            }
+            check(finalOutputFile.exists()) { "Arquivo estabilizado não encontrado: ${finalOutputFile.absolutePath}" }
+            check(finalOutputFile.length() > 1024L) { "Arquivo estabilizado corrompido ou com 0 bytes (${finalOutputFile.length()} bytes <= 1024L)" }
+
+            // Salva vídeo estabilizado no MediaStore / Galeria
+            val repository = VideoRepositoryImpl(appContext)
+            val saveResult = repository.saveVideoToGallery(finalOutputFile)
+            val galleryUri = saveResult.getOrThrow()
 
             StabilizationQueueManager.markTaskCompleted(
                 taskId = taskId,
@@ -149,30 +150,52 @@ class StabilizationWorker(
         } catch (e: Exception) {
             DebugCenter.activePipeline = "Ocioso"
             val isCancelled = e is kotlinx.coroutines.CancellationException || isStopped
-            val errorMsg = if (isCancelled) "Interrompido pelo usuário" else (e.localizedMessage ?: "Erro desconhecido durante estabilização")
-
-            StabilizationQueueManager.markTaskFailed(taskId, errorMsg, videoTitle)
 
             try {
                 notificationManager.cancel(NOTIFICATION_ID)
             } catch (ignored: Exception) {}
 
-            if (!isCancelled) {
-                DebugCenter.logAndToastError(
-                    context = appContext,
-                    module = LogModule.WorkManager,
-                    errorCode = "#401",
-                    detailedMessage = "Falha no worker de estabilização: $errorMsg",
-                    throwable = e
-                )
-                showFailureNotification(videoTitle, errorMsg)
-            } else {
+            // Limpeza defensiva de resíduos corrompidos de processamento no cache
+            try {
+                val cacheDir = appContext.cacheDir
+                cacheDir.listFiles()?.filter {
+                    (it.name.startsWith("temp_video_") || it.name.startsWith("stabilized_")) && it.length() <= 1024L
+                }?.forEach { it.delete() }
+            } catch (ignored: Exception) {}
+
+            if (isCancelled) {
+                try {
+                    val repo = VideoRepositoryImpl(appContext)
+                    val inputUri = Uri.parse(inputUriStr)
+                    repo.saveVideoToGallery(inputUri, videoTitle)
+                } catch (saveEx: Exception) {
+                    DebugCenter.log(
+                        LogModule.WorkManager,
+                        LogLevel.WARN,
+                        "Aviso ao salvar vídeo na galeria após cancelamento: ${saveEx.message}"
+                    )
+                }
+
+                StabilizationQueueManager.removeTask(taskId)
                 DebugCenter.log(
                     LogModule.WorkManager,
                     LogLevel.INFO,
-                    "Processamento cancelado pelo usuário: $videoTitle"
+                    "Processamento cancelado pelo usuário. Vídeo salvo na galeria: $videoTitle"
                 )
+                return@withContext Result.success()
             }
+
+            val errorMsg = e.localizedMessage ?: "Erro desconhecido durante estabilização"
+            StabilizationQueueManager.markTaskFailed(taskId, errorMsg, videoTitle)
+
+            DebugCenter.logAndToastError(
+                context = appContext,
+                module = LogModule.WorkManager,
+                errorCode = "#401",
+                detailedMessage = "Falha no worker de estabilização: $errorMsg",
+                throwable = e
+            )
+            showFailureNotification(videoTitle, errorMsg)
             Result.failure()
         }
     }

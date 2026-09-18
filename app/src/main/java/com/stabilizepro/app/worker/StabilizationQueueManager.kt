@@ -230,7 +230,7 @@ object StabilizationQueueManager {
         WorkManager.getInstance(context)
             .beginUniqueWork(
                 UNIQUE_QUEUE_NAME,
-                ExistingWorkPolicy.APPEND,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 workRequest
             )
             .enqueue()
@@ -374,6 +374,11 @@ object StabilizationQueueManager {
         }
     }
 
+    fun removeTask(taskId: String) {
+        _tasks.value = _tasks.value.filter { it.id != taskId }
+        saveTasksToDisk()
+    }
+
     fun cancelTask(context: Context, taskId: String) {
         init(context)
         try {
@@ -385,18 +390,34 @@ object StabilizationQueueManager {
                 "Falha ao cancelar WorkManager para tarefa $taskId: ${e.message}"
             )
         }
-        val currentList = _tasks.value
-        _tasks.value = currentList.map { task ->
-            if (task.id == taskId) {
-                task.copy(
-                    status = QueueStatus.FALHOU,
-                    stageName = "Cancelado",
-                    errorMessage = "Interrompido pelo usuário",
-                    completedAt = System.currentTimeMillis()
-                )
-            } else task
+
+        val targetTask = _tasks.value.find { it.id == taskId }
+
+        // Save original video to gallery if inputUri is present
+        if (targetTask != null && targetTask.inputUri != Uri.EMPTY) {
+            diskExecutor.execute {
+                try {
+                    val repo = com.stabilizepro.app.data.repository.VideoRepositoryImpl(context)
+                    kotlinx.coroutines.runBlocking {
+                        repo.saveVideoToGallery(targetTask.inputUri, targetTask.videoTitle)
+                    }
+                    DebugCenter.log(
+                        LogModule.WorkManager,
+                        LogLevel.INFO,
+                        "Vídeo original salvo na galeria com sucesso após interrupção: ${targetTask.videoTitle}"
+                    )
+                } catch (e: Exception) {
+                    DebugCenter.log(
+                        LogModule.WorkManager,
+                        LogLevel.WARN,
+                        "Aviso ao salvar vídeo na galeria no cancelamento: ${e.message}"
+                    )
+                }
+            }
         }
-        saveTasksToDisk()
+
+        // Remove from list so it doesn't stay as failure or block subsequent tasks
+        removeTask(taskId)
     }
 
     fun getTaskById(taskId: String): StabilizationTask? {

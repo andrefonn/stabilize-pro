@@ -16,5 +16,7 @@ interface VideoRepository {
         onProgress: (StabilizationProgress) -> Unit
     ): StabilizationResult
     suspend fun saveVideoToGallery(outputFile: File): Result<Uri>
+    suspend fun saveVideoToGallery(uri: Uri, fileName: String? = null): Result<Uri>
+    suspend fun savePhotoToGallery(photoFile: File, fileName: String? = null): Result<Uri>
     fun createShareIntent(uri: Uri): Intent
 }

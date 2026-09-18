@@ -127,6 +127,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelStabilization() {
         stabilizationJob?.cancel()
         stabilizationJob = null
+        val video = _selectedVideo.value
+        if (video != null) {
+            viewModelScope.launch {
+                try {
+                    saveToGalleryUseCase(video.uri, video.name)
+                } catch (ignored: Exception) {}
+            }
+        }
         _currentScreen.value = AppScreen.Main(MainTab.STABILIZER)
         _progress.value = StabilizationProgress()
     }

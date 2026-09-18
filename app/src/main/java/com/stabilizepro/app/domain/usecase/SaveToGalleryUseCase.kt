@@ -8,4 +8,8 @@ class SaveToGalleryUseCase(private val repository: VideoRepository) {
     suspend operator fun invoke(file: File): Result<Uri> {
         return repository.saveVideoToGallery(file)
     }
+
+    suspend operator fun invoke(uri: Uri, fileName: String? = null): Result<Uri> {
+        return repository.saveVideoToGallery(uri, fileName)
+    }
 }

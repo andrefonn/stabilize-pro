@@ -23,6 +23,28 @@ object ColorGradingShader {
         }
     """
 
+    const val BLIT_VERTEX_SHADER = """
+        attribute vec4 aPosition;
+        attribute vec2 aTextureCoord;
+        uniform mat4 uMVPMatrix;
+        varying vec2 vTextureCoord;
+
+        void main() {
+            gl_Position = uMVPMatrix * aPosition;
+            vTextureCoord = aTextureCoord;
+        }
+    """
+
+    const val BLIT_FRAGMENT_SHADER = """
+        precision mediump float;
+        varying vec2 vTextureCoord;
+        uniform sampler2D sTexture;
+
+        void main() {
+            gl_FragColor = texture2D(sTexture, vTextureCoord);
+        }
+    """
+
     /**
      * High-performance OpenGL ES Fragment Shader with full 14-parameter real-time color grading.
      */
