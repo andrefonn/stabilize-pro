@@ -29,7 +29,7 @@ enum class MainTab {
 
 sealed class AppScreen {
     data object Splash : AppScreen()
-    data class Main(val activeTab: MainTab = MainTab.STABILIZER) : AppScreen()
+    data class Main(val activeTab: MainTab = MainTab.CAMERA) : AppScreen()
     data object Processing : AppScreen()
     data class Result(val result: StabilizationResult) : AppScreen()
 }

@@ -34,8 +34,6 @@ class CameraGlSurfaceView(
 
     init {
         setEGLContextClientVersion(2)
-        // Ensure the EGLContext is created with a recordable configuration for 100% compatibility with MediaCodec input surfaces
-        setEGLConfigChooser(RecordableEGLConfigChooser())
         renderer = CameraGlRenderer(
             onSurfaceTextureCreated = { surfaceTexture ->
                 cameraSurfaceTexture = surfaceTexture
@@ -58,69 +56,6 @@ class CameraGlSurfaceView(
         )
         setRenderer(renderer)
         renderMode = RENDERMODE_CONTINUOUSLY
-    }
-
-    /**
-     * Custom EGLConfigChooser requiring EGL_RECORDABLE_ANDROID (0x3142) for zero-copy MediaCodec recording compatibility.
-     */
-    private class RecordableEGLConfigChooser : GLSurfaceView.EGLConfigChooser {
-        override fun chooseConfig(
-            egl: javax.microedition.khronos.egl.EGL10,
-            display: javax.microedition.khronos.egl.EGLDisplay
-        ): javax.microedition.khronos.egl.EGLConfig {
-            val EGL_RECORDABLE_ANDROID = 0x3142
-            val EGL_OPENGL_ES2_BIT = 4
-
-            val candidateSpecs = listOf(
-                // 1. RGBA8888 + RECORDABLE
-                intArrayOf(
-                    javax.microedition.khronos.egl.EGL10.EGL_RED_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_GREEN_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_BLUE_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_ALPHA_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                    EGL_RECORDABLE_ANDROID, 1,
-                    javax.microedition.khronos.egl.EGL10.EGL_NONE
-                ),
-                // 2. RGB888 + RECORDABLE
-                intArrayOf(
-                    javax.microedition.khronos.egl.EGL10.EGL_RED_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_GREEN_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_BLUE_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                    EGL_RECORDABLE_ANDROID, 1,
-                    javax.microedition.khronos.egl.EGL10.EGL_NONE
-                ),
-                // 3. Standard RGBA8888 fallback
-                intArrayOf(
-                    javax.microedition.khronos.egl.EGL10.EGL_RED_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_GREEN_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_BLUE_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_ALPHA_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                    javax.microedition.khronos.egl.EGL10.EGL_NONE
-                ),
-                // 4. Standard RGB888 fallback
-                intArrayOf(
-                    javax.microedition.khronos.egl.EGL10.EGL_RED_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_GREEN_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_BLUE_SIZE, 8,
-                    javax.microedition.khronos.egl.EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                    javax.microedition.khronos.egl.EGL10.EGL_NONE
-                )
-            )
-
-            val numConfigs = IntArray(1)
-            for (spec in candidateSpecs) {
-                if (egl.eglChooseConfig(display, spec, null, 0, numConfigs) && numConfigs[0] > 0) {
-                    val configs = arrayOfNulls<javax.microedition.khronos.egl.EGLConfig>(numConfigs[0])
-                    if (egl.eglChooseConfig(display, spec, configs, numConfigs[0], numConfigs) && configs[0] != null) {
-                        return configs[0]!!
-                    }
-                }
-            }
-            throw IllegalArgumentException("Falha crítica: nenhum EGLConfig compatível encontrado para GLSurfaceView.")
-        }
     }
 
     fun updateColorGrading(params: ColorGradingParams) {

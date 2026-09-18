@@ -169,7 +169,8 @@ class MainActivity : ComponentActivity() {
                                                     onIntensitySelected = { intensity -> viewModel.onIntensitySelected(intensity) },
                                                     onConfigChange = { newConfig -> viewModel.updateConfig(newConfig) },
                                                     onStartStabilization = { viewModel.startStabilization() },
-                                                    onNavigateToQueue = { viewModel.selectTab(MainTab.QUEUE) }
+                                                    onNavigateToQueue = { viewModel.selectTab(MainTab.QUEUE) },
+                                                    onNavigateToCamera = { viewModel.selectTab(MainTab.CAMERA) }
                                                 )
                                             }
                                             MainTab.QUEUE -> {
@@ -227,6 +228,14 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND -> @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
             else -> null
         } ?: return
+
+        // Guard: Only process if it actually targets a .sppreset file
+        val uriStr = uri.toString().lowercase()
+        val pathStr = uri.path?.lowercase() ?: ""
+        val isPresetFile = uriStr.endsWith(".sppreset") || pathStr.endsWith(".sppreset")
+        if (!isPresetFile && intent.action != Intent.ACTION_SEND) {
+            return
+        }
 
         CoroutineScope(Dispatchers.IO).launch {
             try {

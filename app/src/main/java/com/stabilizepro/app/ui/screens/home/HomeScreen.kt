@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ChangeCircle
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Smartphone
@@ -104,7 +105,8 @@ fun HomeScreen(
     onIntensitySelected: (StabilizationIntensity) -> Unit,
     onConfigChange: (StabilizationConfig) -> Unit,
     onStartStabilization: () -> Unit,
-    onNavigateToQueue: () -> Unit = {}
+    onNavigateToQueue: () -> Unit = {},
+    onNavigateToCamera: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -190,20 +192,44 @@ fun HomeScreen(
                         )
                     }
 
-                    // Direct debug icon shortcut
-                    IconButton(
-                        onClick = { showDebugCenter = true },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(SurfaceDark)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.BugReport,
-                            contentDescription = "Debug Center",
-                            tint = TextMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        // Quick Camera Shortcut Button
+                        IconButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onNavigateToCamera()
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(ElectricBlue)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PhotoCamera,
+                                contentDescription = "Abrir Câmera",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Direct debug icon shortcut
+                        IconButton(
+                            onClick = { showDebugCenter = true },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(SurfaceDark)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BugReport,
+                                contentDescription = "Debug Center",
+                                tint = TextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }

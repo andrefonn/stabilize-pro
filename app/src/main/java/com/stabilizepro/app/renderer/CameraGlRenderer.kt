@@ -408,6 +408,12 @@ class CameraGlRenderer(
     }
 
     private fun setupFbo(width: Int, height: Int) {
+        val maxTexSize = IntArray(1)
+        GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, maxTexSize, 0)
+        val limit = if (maxTexSize[0] > 0) maxTexSize[0] else 2048
+        val safeW = width.coerceIn(16, limit)
+        val safeH = height.coerceIn(16, limit)
+
         if (fboTextureId[0] != 0) {
             GLES20.glDeleteTextures(1, fboTextureId, 0)
             fboTextureId[0] = 0
@@ -425,7 +431,7 @@ class CameraGlRenderer(
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexImage2D(
             GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-            width, height, 0,
+            safeW, safeH, 0,
             GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
         )
 
@@ -442,10 +448,10 @@ class CameraGlRenderer(
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
 
-        fboWidth = width
-        fboHeight = height
+        fboWidth = safeW
+        fboHeight = safeH
         fboNeedsRecreate = false
-        DebugCenter.log(LogModule.CameraX, LogLevel.INFO, "FBO configurado: ${width}×${height}")
+        DebugCenter.log(LogModule.CameraX, LogLevel.INFO, "FBO configurado: ${safeW}×${safeH}")
     }
 
     fun release() {

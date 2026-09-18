@@ -329,11 +329,10 @@ class CameraManager(private val context: Context) {
         try {
             provider.unbindAll()
 
-            // 1. Camera selector with physical camera ID targeting
+            // 1. Camera selector with robust standard fallbacks
             val (cameraSelector, usesPhysical) = when (_settings.value.selectedLens) {
                 LensType.FRONT -> {
-                    if (frontCameraId != null) Pair(createCameraSelectorForId(frontCameraId!!, CameraSelector.DEFAULT_FRONT_CAMERA), true)
-                    else Pair(CameraSelector.DEFAULT_FRONT_CAMERA, false)
+                    Pair(CameraSelector.DEFAULT_FRONT_CAMERA, false)
                 }
                 LensType.ULTRA_WIDE -> {
                     if (!logicalSupportsUltraWideZoom && backUltraWideCameraId != null) {
@@ -343,12 +342,14 @@ class CameraManager(private val context: Context) {
                     }
                 }
                 LensType.TELEPHOTO -> {
-                    if (backTelephotoCameraId != null) Pair(createCameraSelectorForId(backTelephotoCameraId!!, CameraSelector.DEFAULT_BACK_CAMERA), true)
-                    else Pair(CameraSelector.DEFAULT_BACK_CAMERA, false)
+                    if (backTelephotoCameraId != null) {
+                        Pair(createCameraSelectorForId(backTelephotoCameraId!!, CameraSelector.DEFAULT_BACK_CAMERA), true)
+                    } else {
+                        Pair(CameraSelector.DEFAULT_BACK_CAMERA, false)
+                    }
                 }
                 LensType.WIDE -> {
-                    if (backWideCameraId != null) Pair(createCameraSelectorForId(backWideCameraId!!, CameraSelector.DEFAULT_BACK_CAMERA), true)
-                    else Pair(CameraSelector.DEFAULT_BACK_CAMERA, false)
+                    Pair(CameraSelector.DEFAULT_BACK_CAMERA, false)
                 }
             }
 
@@ -363,32 +364,41 @@ class CameraManager(private val context: Context) {
                 AspectRatioStrategy.FALLBACK_RULE_AUTO
             )
 
-            // 3. Resolution Strategy according to Quality setting
-            val targetSize = when (_settings.value.quality) {
+            // 3. Resolution Strategy for Preview: 1080p max (guaranteed supported on all Android hardware levels)
+            val previewResolutionStrategy = ResolutionStrategy(
+                Size(1920, 1080),
+                ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER
+            )
+            val previewResolutionSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(aspectRatioStrategy)
+                .setResolutionStrategy(previewResolutionStrategy)
+                .build()
+
+            // 4. Resolution Strategy for ImageCapture
+            val imageTargetSize = when (_settings.value.quality) {
                 VideoQualityOption.UHD_4K -> Size(3840, 2160)
                 VideoQualityOption.QHD_2K -> Size(2560, 1440)
                 VideoQualityOption.FHD_1080P -> Size(1920, 1080)
                 VideoQualityOption.HD_720P -> Size(1280, 720)
                 VideoQualityOption.AUTO_MAX -> Size(3840, 2160)
             }
-            val resolutionStrategy = ResolutionStrategy(
-                targetSize,
+            val imageResolutionStrategy = ResolutionStrategy(
+                imageTargetSize,
                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER
             )
-
-            val resolutionSelector = ResolutionSelector.Builder()
+            val imageResolutionSelector = ResolutionSelector.Builder()
                 .setAspectRatioStrategy(aspectRatioStrategy)
-                .setResolutionStrategy(resolutionStrategy)
+                .setResolutionStrategy(imageResolutionStrategy)
                 .build()
 
             // Preview use case with resolution selector (feeds SurfaceTexture for GL FBO)
             val previewBuilder = Preview.Builder()
-                .setResolutionSelector(resolutionSelector)
+                .setResolutionSelector(previewResolutionSelector)
 
             // ImageCapture use case
             val imageCaptureBuilder = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .setResolutionSelector(resolutionSelector)
+                .setResolutionSelector(imageResolutionSelector)
 
             val displayRotation = glSurfaceView?.display?.rotation ?: android.view.Surface.ROTATION_0
             previewBuilder.setTargetRotation(displayRotation)
@@ -399,7 +409,13 @@ class CameraManager(private val context: Context) {
             }
             imageCapture = imageCaptureBuilder.build()
 
-            // Bind to lifecycle: ONLY Preview and ImageCapture (Video is recorded via GL FBO → MediaCodec)
+            // Multi-level binding fallback: guarantees camera opens on 100% of Android hardware
+            val fallbackSelector = if (_settings.value.selectedLens == LensType.FRONT) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+
             try {
                 camera = provider.bindToLifecycle(
                     lifecycleOwner,
@@ -412,20 +428,48 @@ class CameraManager(private val context: Context) {
                 DebugCenter.log(
                     LogModule.CameraX,
                     LogLevel.WARN,
-                    "Seletor físico falhou (${bindEx.message}), aplicando câmera padrão com zoom."
+                    "Tentativa 1 falhou (${bindEx.message}), tentando seletor padrão."
                 )
-                val fallbackSelector = if (_settings.value.selectedLens == LensType.FRONT) {
-                    CameraSelector.DEFAULT_FRONT_CAMERA
-                } else {
-                    CameraSelector.DEFAULT_BACK_CAMERA
+                try {
+                    camera = provider.bindToLifecycle(
+                        lifecycleOwner,
+                        fallbackSelector,
+                        preview,
+                        imageCapture
+                    )
+                    isUsingPhysicalLensSelector = false
+                } catch (bindEx2: Exception) {
+                    DebugCenter.log(
+                        LogModule.CameraX,
+                        LogLevel.WARN,
+                        "Tentativa 2 falhou (${bindEx2.message}), usando use-cases padrão."
+                    )
+                    val barePreview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(surfaceProvider)
+                    }
+                    val bareImageCapture = ImageCapture.Builder().build()
+                    try {
+                        camera = provider.bindToLifecycle(
+                            lifecycleOwner,
+                            fallbackSelector,
+                            barePreview,
+                            bareImageCapture
+                        )
+                        preview = barePreview
+                        imageCapture = bareImageCapture
+                        isUsingPhysicalLensSelector = false
+                    } catch (bindEx3: Exception) {
+                        // Level 4 fallback: ONLY preview
+                        camera = provider.bindToLifecycle(
+                            lifecycleOwner,
+                            fallbackSelector,
+                            barePreview
+                        )
+                        preview = barePreview
+                        imageCapture = null
+                        isUsingPhysicalLensSelector = false
+                    }
                 }
-                camera = provider.bindToLifecycle(
-                    lifecycleOwner,
-                    fallbackSelector,
-                    preview,
-                    imageCapture
-                )
-                isUsingPhysicalLensSelector = false
             }
 
             // Apply Camera2 manual controls

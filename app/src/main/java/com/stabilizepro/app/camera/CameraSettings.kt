@@ -31,7 +31,7 @@ enum class CameraAspectRatio(val displayName: String, val ratioValue: Float) {
 data class CameraSettings(
     val captureMode: CaptureMode = CaptureMode.VIDEO,
     val selectedLens: LensType = LensType.WIDE,
-    val quality: VideoQualityOption = VideoQualityOption.AUTO_MAX,
+    val quality: VideoQualityOption = VideoQualityOption.FHD_1080P,
     val targetFps: Int = 30, // 30 or 60 FPS
     val aspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_16_9,
     val iso: Int = 0, // 0 = Auto
